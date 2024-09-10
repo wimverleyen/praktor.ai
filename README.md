@@ -20,3 +20,14 @@ The current workflows are developed with Llama3.1 with ollama. Code for ChatGPT-
 #### Open source vector database
 
 #### Open source Knowledge Graph
+
+
+## Use cases
+
+### Answer coding question
+
+
+### Answer a question
+
+
+
