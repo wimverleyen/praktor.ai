@@ -7,6 +7,7 @@ import pika
 
 import time
 import random
+from json import dumps
 
 from settings import create_log
 
@@ -35,12 +36,18 @@ class Agent:
 
         messageId = 1
 
-        agents = range(0, 4)
+        agents = range(0, 1)
 
         for _ in agents:
             message = f"Sending Message Id: {messageId}"
 
-            channel.basic_publish(exchange='', routing_key='agentic', body=message)
+            data = {}
+            data['job_title'] = 'AI Assurance and Co-design Engineer'
+            data['company'] = 'Raytheon Technologies (RTX)'
+            data['skills'] = '- B.S. in Electrical Engineering, Computer Science, or other STEM discipline and 8+ years of relevant work experience. - Analytical, project management, problem-solving, interpersonal, leadership skills. - Self-starter with willingness to take initiative, support strategic priorities, take ownership of delegated projects/initiatives and contribute to results, and ability to work with a minimum supervision - Proﬁcient in a combination of the following areas: AI assurance, automated reasoning, logic, programming languages, assurance cases, hardware-software co-design, optimization, and system dynamics & control. - Familiarity with model-based system engineering and software engineering. - Familiarity with formal analysis, veriﬁcation tools and methodologies for cyber-physical systems including AI-enabled systems.'
+
+            channel.basic_publish(exchange='', routing_key='agentic', body=dumps(data))
+            #channel.basic_publish(exchange='', routing_key='agentic', body=data)
 
             print(f"sent message: {message}")
     
