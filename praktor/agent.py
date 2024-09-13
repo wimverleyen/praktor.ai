@@ -8,8 +8,11 @@ import pika
 import time
 import random
 
+from settings import create_log
+
 from unittest import TestCase, TestLoader, TextTestRunner
 
+log = create_log()
 
 
 class Agent:
@@ -23,18 +26,17 @@ class Agent:
         ### producer        
 
         connection_parameters = pika.ConnectionParameters('localhost')
-
         connection = pika.BlockingConnection(connection_parameters)
-
         channel = connection.channel()
-
-        channel.queue_declare(queue='agentic')
+        if connection.is_open and channel.is_open:
+            channel.queue_declare(queue='agentic')
+        else:
+            ValueError('RabbitMQ: Connection/channel not open')
 
         messageId = 1
 
         agents = range(0, 4)
 
-        #while(True):
         for _ in agents:
             message = f"Sending Message Id: {messageId}"
 
@@ -60,6 +62,14 @@ class TestAgent(TestCase):
     def testAAgent(self):
 
         agent = Agent()
+
+        data = {}
+        data['job_title'] = 'AI Assurance and Co-design Engineer'
+        data['company'] = 'Raytheon Technologies (RTX)'
+        data['skills'] = '- B.S. in Electrical Engineering, Computer Science, or other STEM discipline and 8+ years of relevant work experience. - Analytical, project management, problem-solving, interpersonal, leadership skills. - Self-starter with willingness to take initiative, support strategic priorities, take ownership of delegated projects/initiatives and contribute to results, and ability to work with a minimum supervision - Proﬁcient in a combination of the following areas: AI assurance, automated reasoning, logic, programming languages, assurance cases, hardware-software co-design, optimization, and system dynamics & control. - Familiarity with model-based system engineering and software engineering. - Familiarity with formal analysis, veriﬁcation tools and methodologies for cyber-physical systems including AI-enabled systems.'
+
+
+
         agent.process()
 
         #llm = agent.create_llm(MODEL)
