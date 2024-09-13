@@ -7,7 +7,7 @@ import random
 def on_message_received(ch, method, properties, body):
     processing_time = random.randint(1, 6)
     print(f'received: "{body}", will take {processing_time} to process')
-    print(f'properties: {properties}')
+    #print(f'properties: {properties}')
     time.sleep(processing_time)
     ch.basic_ack(delivery_tag=method.delivery_tag)
     print(f'finished processing and acknowledged message')
