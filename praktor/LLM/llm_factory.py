@@ -23,7 +23,7 @@ class LLMFactory(ABC):
         else:
             raise ValueError(f"Unsupported LLM type: {llm_type}")
 
-    def register_llm(self, name: str, llm_class: type):
+    def register_llm(self, name: str, llm_class: type) -> None:
         """Register an LLM class with a unique name"""
         if name in self._llms:
             raise ValueError(f"LLM '{name}' already registered")

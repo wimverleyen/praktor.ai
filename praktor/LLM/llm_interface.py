@@ -1,11 +1,12 @@
 from abc import ABC, abstractmethod
+from typing import List, Dict
 
 class LLM(ABC):
     """
     Abstract class with interface for LLMs
     """
     @abstractmethod
-    def generate_text(self, prompt):
+    def generate_text(self, prompt: List[str]) -> Dict:
         pass
 
     @abstractmethod
@@ -13,5 +14,5 @@ class LLM(ABC):
         pass
 
     @abstractmethod
-    def get_model_info(self):
+    def get_model_info(self) -> Dict:
         pass
