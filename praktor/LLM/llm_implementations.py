@@ -23,6 +23,9 @@ log.debug('OPENAI_API_KEY- %s'%api_key)
 
 
 class OllamaLlama31(LLM):
+    """
+    Implementation for Llama 3.1 LLM with Ollama
+    """
     def __init__(self, model: str='', temperature=0.0):
         super().__init__()
         self.__llm = OllamaLLM(model=model, temperature=temperature)
@@ -42,6 +45,9 @@ class OllamaLlama31(LLM):
     
 
 class GPT35Turbo(LLM):
+    """
+    Implementation for ChatGPT 3.5
+    """
     def __init__(self, model: str='', temperature=0.0):
         super().__init__()
             

@@ -6,6 +6,9 @@ from LLM.llm_implementations import OllamaLlama31, GPT35Turbo
 
 
 class LLMFactory(ABC):
+    """
+    Abstract class as interface for LLM factory
+    """
     def __init__(self):
         self._llms = {}
     
@@ -32,33 +35,17 @@ class LLMFactory(ABC):
 
 
 class OllamaLLMFactory(LLMFactory):
+    """
+        Factory class for Llama3.1 model local with Ollama
+    """
+
     def create_llm(self, llm_type: str) -> LLM:
         return OllamaLlama31(model=MODEL, temperature=0.0)
-        #return OllamaLLM(model=MODEL, temperature=0.0)
 
 
 class GPT35TurboLLMFactory(LLMFactory):
+    """
+        Factory class for ChatGPT model with OpenAI
+    """
     def create_llm(self, llm_type: str) -> LLM:
         return GPT35Turbo(model='gpt-3.5-turbo-instruct', temperature=0.0)
-        #return GPT35Turbo(model=MODEL, temperature=0.0)
-
-
-"""
-#class LLMFactory(ABC):
-#    @abstractmethod
-#    def create_llm(self) -> LLM:
-#        pass
-
-
-class LLMFactory:
-    @staticmethod
-    def create_llm(llm_type: str) -> LLMInterface:
-        if llm_type == "llama3.1":
-            return OllamaLLM()
-        elif llm_type == "openai":
-            return OpenAI()
-        elif llm_type == "claude":
-            return Claude()
-        else:
-            raise ValueError(f"Unsupported LLM type: {llm_type}")
-"""
