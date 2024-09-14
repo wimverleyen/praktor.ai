@@ -9,7 +9,7 @@ import time
 import random
 from json import dumps
 
-from settings import create_log
+from settings import create_log, MD, PDF
 
 from unittest import TestCase, TestLoader, TextTestRunner
 

@@ -8,6 +8,9 @@ load_dotenv()
 
 MODEL = 'llama3.1'
 
+MD = os.getenv('MD')
+PDF = os.getenv('PDF')
+
 VECTOR_DB = os.getenv('VECTOR_DB')
 
 # Create a logger

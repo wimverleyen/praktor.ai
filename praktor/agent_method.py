@@ -1,7 +1,7 @@
 from LLM.prompt import CoverLetter, CoverLetterImprove
 from LLM.llm_interface import LLMAdapter
 
-from settings import create_log
+from settings import create_log, MD, PDF
 from utils import save_markdown
 
 from typing import Dict
@@ -24,7 +24,9 @@ def WriteCoverLetter(data: Dict) -> None:
     response = llm.generate(data=data)
     log.debug(f'Cover letter: {response}')
 
-    save_markdown('./markdowns/cover_letter.md', response)
+    print(MD+'cover_letter.md')
+
+    save_markdown(MD+'cover_letter.md', response)
 
     data['cover_letter'] = response
     llm = LLMAdapter(CoverLetterImprove())
@@ -32,11 +34,11 @@ def WriteCoverLetter(data: Dict) -> None:
     response = llm.generate(data=data)
     log.debug(f'Cover letter: {response}')
 
-    save_markdown('./markdowns/cover_letter_improved.md', response)
+    save_markdown(MD+'cover_letter_improved.md', response)
 
     data['cover_letter'] = response
 
     response = llm.generate(data=data)
     log.debug(f'Cover letter: {response}')
 
-    save_markdown('./markdowns/cover_letter_improved_2.md', response)
+    save_markdown(MD+'cover_letter_improved_2.md', response)
