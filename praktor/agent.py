@@ -18,6 +18,7 @@ from unittest import TestCase, TestLoader, TextTestRunner
 log = create_log()
 
 
+
 class Agent:
 
     def __init__(self) -> None:
@@ -36,17 +37,21 @@ class Agent:
         else:
             ValueError('RabbitMQ: Connection/channel not open')
 
-        messageId = 1
+        
 
         agents = range(0, 1)
 
         for _ in agents:
-            message = f"Sending Message Id: {messageId}"
 
+            # Abstract away the data class for an agent - different agents; not sure many to many (1-1)?
             data = {}
             data['job_title'] = 'Director of Data Science'
             data['company'] = 'Peloton'
+            # for the coverletter agent!
+            #data['skills']
+            ##data['skills'] = '- B.S. in Electrical Engineering, Computer Science, or other STEM discipline and 8+ years of relevant work experience. - Analytical, project management, problem-solving, interpersonal, leadership skills. - Self-starter with willingness to take initiative, support strategic priorities, take ownership of delegated projects/initiatives and contribute to results, and ability to work with a minimum supervision - Proﬁcient in a combination of the following areas: AI assurance, automated reasoning, logic, programming languages, assurance cases, hardware-software co-design, optimization, and system dynamics & control. - Familiarity with model-based system engineering and software engineering. - Familiarity with formal analysis, veriﬁcation tools and methodologies for cyber-physical systems including AI-enabled systems.'
 
+            # Read job description
             loader = PyPDFLoader(PDF+'Peloton_job_description.pdf')
             pages = loader.load()
             job_description = ''
@@ -54,18 +59,15 @@ class Agent:
                 job_description += page.page_content
             log.debug(f'DEBUG: urls read_pdf %s', job_description)
             del loader
-
-            #data['skills'] = '- B.S. in Electrical Engineering, Computer Science, or other STEM discipline and 8+ years of relevant work experience. - Analytical, project management, problem-solving, interpersonal, leadership skills. - Self-starter with willingness to take initiative, support strategic priorities, take ownership of delegated projects/initiatives and contribute to results, and ability to work with a minimum supervision - Proﬁcient in a combination of the following areas: AI assurance, automated reasoning, logic, programming languages, assurance cases, hardware-software co-design, optimization, and system dynamics & control. - Familiarity with model-based system engineering and software engineering. - Familiarity with formal analysis, veriﬁcation tools and methodologies for cyber-physical systems including AI-enabled systems.'
+            
             data['job_description'] = job_description
 
             channel.basic_publish(exchange='', routing_key='agentic', body=dumps(data))
-            #channel.basic_publish(exchange='', routing_key='agentic', body=data)
-
-            print(f"sent message: {message}")
+                        
     
-            time.sleep(random.randint(1, 4))
+            #time.sleep(random.randint(1, 4))
+    #def parallel_clone(self): clone agent across similar tasks, e.g., apply for 10 jobs
 
-            messageId+=1
 
 
 class TestAgent(TestCase):

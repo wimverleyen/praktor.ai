@@ -13,14 +13,10 @@ from settings import create_log
 
 log = create_log()
 
-# run one or many consumers
-
-#HandleAgentFn = Callable[[Any], None]
-
 def on_message_received(ch, method, properties: BasicProperties, body, args):
     
     data = loads(body)
-    log.debug(f'data keys: {data.keys()}')
+    log.debug(f'callback function - data keys: {data.keys()}')
 
     args(data)
 
@@ -36,5 +32,5 @@ channel.basic_qos(prefetch_count=1)
 on_message_callback = partial(on_message_received, args=(JobApplication))
 channel.basic_consume(queue='agentic', on_message_callback=on_message_callback)
 
-print('Starting Consuming')
+print('Ready to receive[agentic]')
 channel.start_consuming()

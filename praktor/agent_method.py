@@ -2,7 +2,10 @@ from LLM.prompt import (CoverLetter,
                          CoverLetterImprove, 
                          Keywords, 
                          KeywordsImprove, 
-                         WorkExperience)
+                         WorkExperience,
+                         JobRequirements,
+                         Resume,
+                         ResumeImprove)
 from LLM.llm_interface import LLMAdapter
 
 from settings import create_log, MD, PDF
@@ -75,7 +78,33 @@ def JobApplication(data: Dict) -> None:
 
     data['keywords_improved'] = response
 
-    llm = LLMAdapter(WorkExperience())
+    #llm = LLMAdapter(WorkExperience())
+    #response = llm.generate(data=data)
+    #log.debug(f'WorkExperience: {response}')
+    #save_markdown(MD+'work_experience.md', response)
+
+    experience = read_markdown(MD+'work_experience.md')
+    log.debug('DEBUG: resume: %s', experience)
+
+    data['work_experience'] = experience
+
+    llm = LLMAdapter(JobRequirements())
     response = llm.generate(data=data)
-    log.debug(f'WorkExperience: {response}')
-    save_markdown(MD+'work_experience.md', response)
+    log.debug(f'JobRequirements: {response}')
+    save_markdown(MD+'job_requirements.md', response)
+
+    data['job_requirments'] = response
+
+    llm = LLMAdapter(Resume())
+    response = llm.generate(data=data)
+    log.debug(f'Resume: {response}')
+    save_markdown(MD+'resume_update.md', response)
+
+    data['resume_update'] = response
+
+    llm = LLMAdapter(ResumeImprove())
+    response = llm.generate(data=data)
+    log.debug(f'ResumeImprove: {response}')
+    save_markdown(MD+'resume_update_2.md', response)
+
+    data['resume_update_2'] = response

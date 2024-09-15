@@ -11,9 +11,6 @@ def CoverLetter():
     template = f'''I need a compelling cover letter for the position of {{job_title}} at {{company}}. 
                     The job description emphasizes {{skills}}.
                 '''
-    #template = f'''Rewrite adjusted for my resume for a {{job_description}}? Here's my current resume: {{resume}}.
-    #            ACCURACY MODE: ENABLED and DO NOT HALLUCINATE
-    #            '''
     print(f"\n{green}LOGGING: Write cover letter - formatted prompt template string to an LLM model --------{white}")
     return PromptTemplate.from_template(template)
 
@@ -68,20 +65,30 @@ def KeywordsImprove():
     print(f"\n{green}LOGGING: Improve keywords - formatted prompt template string to an LLM model --------{white}")
     return PromptTemplate.from_template(template)
 
-def WorkExperience():
+def JobRequirements():
     """
-        Extract keywords from resume. One pass to the LLM.
-        
+        Extract job requirements from job description. One pass to the LLM.
     """
     green = "\033[0;32m"
     white = "\033[0;39m"
-    template = f''' Extract the work experience section from this {{resume}}. Present in an easily to follow format.
+    template = f''' Extract the job requirements from this {{job_description}}. Present in an easily to follow format.
+                '''
+    
+    print(f"\n{green}LOGGING: Job requirements from job description - formatted prompt template string to an LLM model --------{white}")
+    return PromptTemplate.from_template(template)
 
+def WorkExperience():
+    """
+        Extract keywords from resume. One pass to the LLM. This prompt is not working well.
+    """
+    green = "\033[0;32m"
+    white = "\033[0;39m"
+    template = f''' Extract the complete professional experience section from this resume: {{resume}}.
+                    Do not incorporate any technical skills section.
                 '''
     
     print(f"\n{green}LOGGING: Work experience section from resume - formatted prompt template string to an LLM model --------{white}")
     return PromptTemplate.from_template(template)
-
 
 def Requirements():
     """
@@ -105,12 +112,29 @@ def Resume():
     """
     green = "\033[0;32m"
     white = "\033[0;39m"
-    template = f''' Based on this job description for a {{job_title}} role at {{company}}, 
-                    write a resume for my past 10 years of work experience with 3-5 bullet points per role 
-                    that include metrics and the most important 25 keywords from the job description. My past titles 
-                    and companies were {{previous_job_titles}}. No need to include an objective statement. 
-                    This is the job description: {{job_description}}.
+    template = f''' You are an experienced resume writer who specializes in make leadership resumes on Data Science, Artificial intelligence
+                and Machine Learing, and Engineering: {{resume}} for the {{job_title}} role at {{company}}.
+    
+    including these keywords: 
+                    {{keywords}}. Write a resume as a top business executive, that include metrics and the most 
+                    important keywords: {{keywords_improved}}. Keep my past titles and companies from my work experience:
+                      {{work_experience}}.                    
                 '''
     
-    print(f"\n{green}LOGGING: Write cover letter - formatted prompt template string to an LLM model --------{white}")
+    print(f"\n{green}LOGGING: Rewrite resume - formatted prompt template string to an LLM model --------{white}")
     return PromptTemplate.from_template(template)
+
+def ResumeImprove():
+    """
+        Write a resume for a job application. One pass to the LLM.
+    """
+    green = "\033[0;32m"
+    white = "\033[0;39m"
+    template = f''' Update the resume: {{resume_update}} for the {{job_title}} role at {{company}} with this job description: 
+                    {{job_description}}, including these keywords: {{keywords}}. 
+                '''
+    #Merge a first resume: {{resume}} and a second resume {{resume_update}}. Also include information from another version of this resume: {{resume}}.
+    print(f"\n{green}LOGGING: Improve resume - formatted prompt template string to an LLM model --------{white}")
+    return PromptTemplate.from_template(template)
+
+#Rewrite my {{work_experience}} by incorporating these keywords.
