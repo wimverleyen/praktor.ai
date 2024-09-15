@@ -2,10 +2,11 @@ from LLM.prompt import (CoverLetter,
                          CoverLetterImprove, 
                          Keywords, 
                          KeywordsImprove, 
-                         WorkExperience,
                          JobRequirements,
                          Resume,
-                         ResumeImprove)
+                         ResumeImprove,
+                         ResumeAskImprove, 
+                         ResumeCheckup)
 from LLM.llm_interface import LLMAdapter
 
 from settings import create_log, MD, PDF
@@ -83,8 +84,9 @@ def JobApplication(data: Dict) -> None:
     #log.debug(f'WorkExperience: {response}')
     #save_markdown(MD+'work_experience.md', response)
 
-    experience = read_markdown(MD+'work_experience.md')
-    log.debug('DEBUG: resume: %s', experience)
+    #experience = read_markdown(MD+'work_experience.md')
+    experience = read_markdown('./markdowns/professional_experience.md')
+    log.debug('DEBUG: experience: %s', experience)
 
     data['work_experience'] = experience
 
@@ -93,11 +95,11 @@ def JobApplication(data: Dict) -> None:
     log.debug(f'JobRequirements: {response}')
     save_markdown(MD+'job_requirements.md', response)
 
-    data['job_requirments'] = response
+    data['job_requirements'] = response
 
     llm = LLMAdapter(Resume())
     response = llm.generate(data=data)
-    log.debug(f'Resume: {response}')
+    log.debug(f'Updated resume: {response}')
     save_markdown(MD+'resume_update.md', response)
 
     data['resume_update'] = response
@@ -108,3 +110,24 @@ def JobApplication(data: Dict) -> None:
     save_markdown(MD+'resume_update_2.md', response)
 
     data['resume_update_2'] = response
+
+    llm = LLMAdapter(ResumeAskImprove())
+    response = llm.generate(data=data)
+    log.debug(f'ResumeImprove: {response}')
+    save_markdown(MD+'resume_update_3.md', response)
+
+    data['resume_update_3'] = response
+
+    llm = LLMAdapter(ResumeCheckup())
+    response = llm.generate(data=data)
+    log.debug(f'ResumeImprove: {response}')
+    save_markdown(MD+'resume_update_4.md', response)
+
+    data['resume_update_4'] = response
+
+    llm = LLMAdapter(ResumeCheckup())
+    response = llm.generate(data=data)
+    log.debug(f'ResumeImprove: {response}')
+    save_markdown(MD+'resume_update_4.md', response)
+
+    data['resume_update_4'] = response

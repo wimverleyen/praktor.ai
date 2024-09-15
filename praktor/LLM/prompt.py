@@ -112,14 +112,19 @@ def Resume():
     """
     green = "\033[0;32m"
     white = "\033[0;39m"
-    template = f''' You are an experienced resume writer who specializes in make leadership resumes on Data Science, Artificial intelligence
-                and Machine Learing, and Engineering: {{resume}} for the {{job_title}} role at {{company}}.
-    
-    including these keywords: 
-                    {{keywords}}. Write a resume as a top business executive, that include metrics and the most 
-                    important keywords: {{keywords_improved}}. Keep my past titles and companies from my work experience:
-                      {{work_experience}}.                    
+    template = f''' You are an experienced resume writer who specializes in making resumes for leadership roles in Data Science, Artificial intelligence
+                and Machine Learing, and Engineering. Help me to write a resume for the {{job_title}} role at {{company}}. Ask me questions if you need 
+                to know anything else to write a professional resume.
+
+                {{work_experience}}
+
+                Here is a resume for a Director in Data Science:
+                {{resume}}
                 '''
+                    #including these keywords: 
+                    #{{keywords}}. Write a resume as a top business executive, that include metrics and the most 
+                    #important keywords: {{keywords_improved}}. Keep my past titles and companies from my work experience:
+                    #  {{work_experience}}.
     
     print(f"\n{green}LOGGING: Rewrite resume - formatted prompt template string to an LLM model --------{white}")
     return PromptTemplate.from_template(template)
@@ -130,11 +135,63 @@ def ResumeImprove():
     """
     green = "\033[0;32m"
     white = "\033[0;39m"
-    template = f''' Update the resume: {{resume_update}} for the {{job_title}} role at {{company}} with this job description: 
+    template = f''' Update the resume: {{resume_update}} with this job description: 
                     {{job_description}}, including these keywords: {{keywords}}. 
                 '''
     #Merge a first resume: {{resume}} and a second resume {{resume_update}}. Also include information from another version of this resume: {{resume}}.
     print(f"\n{green}LOGGING: Improve resume - formatted prompt template string to an LLM model --------{white}")
     return PromptTemplate.from_template(template)
 
+def ResumeAskImprove():
+    """
+        Write a resume for a job application. One pass to the LLM.
+    """
+    green = "\033[0;32m"
+    white = "\033[0;39m"
+    template = f''' You are an experienced resume writer who specializes in making resumes for leadership roles in Data Science, Artificial intelligence
+                and Machine Learing, and Engineering. How would you improve this {{resume_update_2}} with this job description: 
+                    {{job_description}}, including these keywords: {{keywords}}. Please advise and rewrite this resume.
+                '''
+    #Merge a first resume: {{resume}} and a second resume {{resume_update}}. Also include information from another version of this resume: {{resume}}.
+    print(f"\n{green}LOGGING: Improve resume - formatted prompt template string to an LLM model --------{white}")
+    return PromptTemplate.from_template(template)
+
+
+def ResumeCheckup():
+
+    """
+        Write a resume for a job application. One pass to the LLM.
+    """
+    green = "\033[0;32m"
+    white = "\033[0;39m"
+    template = f''' You are a senior hiring manager with years of experience hiring for leadership roles in Data Science, Artificial intelligence
+                and Machine Learing, and Engineering. Please take a look at this job description for a Director of Data Science and identify the
+                  10 most important qualifications and skills for candidates to have in this role. Here is the job listing:
+                  {{job_description}}.
+                '''
+    #Merge a first resume: {{resume}} and a second resume {{resume_update}}. Also include information from another version of this resume: {{resume}}.
+    print(f"\n{green}LOGGING: Improve resume - formatted prompt template string to an LLM model --------{white}")
+    return PromptTemplate.from_template(template)
+
+def ResumeCheckin():
+
+    """
+        Write a resume for a job application. One pass to the LLM.
+    """
+    green = "\033[0;32m"
+    white = "\033[0;39m"
+    template = f''' You are looking to stand out with a very professional resume listing the most recent work experience. Please update this resume 
+                    with 10 improvements: {{resume}}
+                '''
+    #Merge a first resume: {{resume}} and a second resume {{resume_update}}. Also include information from another version of this resume: {{resume}}.
+    print(f"\n{green}LOGGING: Improve resume - formatted prompt template string to an LLM model --------{white}")
+    return PromptTemplate.from_template(template)
+
 #Rewrite my {{work_experience}} by incorporating these keywords.
+def ResumeJD():
+
+    template = f''' You are an experienced resume writer who specializes in making resumes for leadership roles in Data Science, Artificial intelligence
+                and Machine Learing, and Engineering. Please take a look at this job description for a {{job_title}} and {{conmpany}} and write a resume 
+                with bullet point achievements that show impact and metrics. Here is the job listing:
+                {{job_description}}. 
+                '''
