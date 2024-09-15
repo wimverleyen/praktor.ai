@@ -1,5 +1,5 @@
 *.log
 .env
 .DS_Store
-markdowns/**
-pdfs/**
+./markdowns/**
+./pdfs/**
