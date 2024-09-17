@@ -1,6 +1,3 @@
-from LLM.llm_factory import LLMFactory, OllamaLLMFactory
-from LLM.llm_interface import LLM
-
 from langchain_community.document_loaders import PyPDFLoader
 
 from settings import MODEL
@@ -12,6 +9,7 @@ import random
 from json import dumps
 
 from settings import create_log, MD, PDF
+from utils import save_markdown
 
 from unittest import TestCase, TestLoader, TextTestRunner
 
@@ -22,9 +20,11 @@ log = create_log()
 class Agent:
 
     def __init__(self) -> None:
-        self.llm_factory = OllamaLLMFactory()
-    def create_llm(self, llm_type: str) -> LLM:
-        return self.llm_factory.create_llm(llm_type)
+        #self.llm_factory = LLMFactory()
+        pass
+
+    #def create_llm(self, llm_type: str) -> LLM:
+    #    return self.llm_factory.create_llm(llm_type)
     
     def process(self):
         ### producer        
@@ -61,6 +61,7 @@ class Agent:
             del loader
             
             data['job_description'] = job_description
+            save_markdown(MD+'job_description.md', job_description)
 
             channel.basic_publish(exchange='', routing_key='agentic', body=dumps(data))
                         

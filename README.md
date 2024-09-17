@@ -30,3 +30,18 @@ The current workflows are developed with Llama3.1 with ollama. Code for ChatGPT-
 ### Answer a question
 
 
+### Job application
+
+#### Tailor your resume
+
+##### Keyword extraction
+
+1. Define keywords
+2. Review and ask for a description of these keywords
+
+##### Ask for a resume for the job description
+
+1. Prompt for generating a new resume.
+2. Ask for 5 achievement for a resume from a job description
+
+##### Resume optimization

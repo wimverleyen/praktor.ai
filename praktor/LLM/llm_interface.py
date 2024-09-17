@@ -7,10 +7,9 @@ from langchain_ollama.llms import OllamaLLM
 
 log = create_log()
 
+"""
 class LLM(ABC):
-    """
-    Abstract class with interface for LLMs
-    """
+    
     @abstractmethod
     def generate_text(self, prompt: List[str]) -> Dict:
         pass
@@ -33,8 +32,7 @@ class LLM(ABC):
     #    self.__chain = (
     #        self.__prompt
     #        | self.__llm)
-
-
+"""
 
 class LLMAdapter:
     """
