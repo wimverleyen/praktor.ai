@@ -37,14 +37,14 @@ class Agent:
         else:
             ValueError('RabbitMQ: Connection/channel not open')
 
-        
-
         agents = range(0, 1)
 
         for _ in agents:
 
             # Abstract away the data class for an agent - different agents; not sure many to many (1-1)?
             data = {}
+
+
             data['job_title'] = 'Director of Data Science'
             data['company'] = 'Peloton'
             # for the coverletter agent!
@@ -68,6 +68,20 @@ class Agent:
     
             #time.sleep(random.randint(1, 4))
     #def parallel_clone(self): clone agent across similar tasks, e.g., apply for 10 jobs
+    def thankyou(self):
+        ### Producer: sent agent request
+
+        connection_parameters = pika.ConnectionParameters('localhost')
+        connection = pika.BlockingConnection(connection_parameters)
+        channel = connection.channel()
+        if connection.is_open and channel.is_open:
+            channel.queue_declare(queue='agentic')
+        else:
+            ValueError('RabbitMQ: Connection/channel not open')
+
+        #data = {'adjective':'professional', 'position': 'AVP Data Science', 'content':'Write a thank you email after an interview. Her expertise in IT Strategy, digital transformation, very thoughtful questions around value proposition were outstanding and great example for the organization.'}
+        data = {'adjective':'professional', 'position': 'AVP Data Science', 'content':'Write a thank you email after an interview. Her expertise in IT Strategy, digital transformation, very thoughtful questions around value proposition were outstanding and great example for the organization.'}
+        channel.basic_publish(exchange='', routing_key='agentic', body=dumps(data))
 
 
 
@@ -89,7 +103,7 @@ class TestAgent(TestCase):
 
 
 
-        agent.process()
+        #agent.process()
 
         #llm = agent.create_llm(MODEL)
         #llm = agent.create_llm('gpt-3.5-turbo-instruct')
@@ -98,7 +112,8 @@ class TestAgent(TestCase):
     
     def testBAgent(self):
 
-        pass
+        agent = Agent()
+        agent.thankyou()
 
 
 

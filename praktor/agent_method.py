@@ -11,9 +11,13 @@ from LLM.prompt import (CoverLetter,
                          ResumeCheckup,
                          ResumeCheckin,
                          ResumeJD,
-                         ResumeTailor)
+                         ResumeTailor,
+                         PromptEmailThankYou,
+                         PromptSearch)
 from LLM.llm_interface import LLMAdapter
 from LLM.llm_factory import LLMFactory
+
+from retrieve_generate import RAGSP
 
 from settings import create_log, MODEL, MD, PDF
 from utils import save_markdown, read_markdown
@@ -24,6 +28,15 @@ log = create_log()
 
 
 #def WriteCoverLetter(resume_fn: str='', job_description_fn: str='') -> None:
+
+def ThankYouEmail(data: Dict) -> None:
+
+    llm = LLMAdapter(PromptEmailThankYou())
+    response = llm.generate(data=data)
+    print(f'{response}')
+    del llm
+
+    save_markdown(MD+'communication_thank_you.md', response)
 
 def WriteCoverLetter(data: Dict) -> None:
     """
@@ -112,12 +125,13 @@ def JobApplication(data: Dict) -> None:
     - get job requirements from resume
     """
 
-    # ask resume for job description
+    # Generate resume for job description
     llm = LLMAdapter(ResumeJD())
     response = llm.generate(data=data)
     log.debug(f'ResumeJD: {response}')
     save_markdown(MD+'resume_jd.md', response)
     data['resume_jd'] = response
+
 
     # generic resume
     #resume = read_markdown(MD+'Verleyen_Wim_resume.md')
@@ -186,3 +200,22 @@ def JobApplication(data: Dict) -> None:
     #save_markdown(MD+'resume_update_7.md', response)
 
     #data['resume_update_7'] = response
+
+def JobInterview(data: Dict) -> None:
+
+    # Haelthcare
+    rag = RAGSP()
+    log.debug('Question: How to assess data quality for text?')
+    #data = {'search':"What are business value creation initiatives", 'content': " building an innovation team in a healthcare company?"}
+    data = {'search':"What is the estimate on ROI for different GenAI projects", 'content': " building an innovation team in a healthcare company?"}
+    log.debug(f'Question {data}')
+    #llm.update(PromptSearch())
+    #response = rag.generate(data=data)
+    #response = rag.generate(search="How much business value GemAI can create", content=" in the healthcare sector specific?")
+    response = rag.generate(search=data['search'], content=data['content'])
+    log.debug(f'Question {response}')
+    print(f'Question - RAG {response}')
+
+    save_markdown(MD+'SP_RAG_question.md', response)
+
+    rag.references(text=data['search']+data['content'])

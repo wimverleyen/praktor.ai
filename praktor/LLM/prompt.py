@@ -1,6 +1,39 @@
 from langchain.prompts import PromptTemplate
 
 
+def PromptEmailThankYou():
+
+    green = "\033[0;32m"
+    white = "\033[0;39m"
+    template = f'''You are a business executive and are responding as a lead data scientist.
+                Question: Write me a thank you email {{adjective}} and respond on {{content}} for {{position}}'
+                Answer: 
+                ACCURACY MODE: ENABLED and DO NOT HALLUCINATE
+                '''
+    print(f"\n{green}LOGGING: PromptEmailThank - formatted prompt template string to an LLM model --------{white}")
+    return PromptTemplate.from_template(template)
+
+def AugmentResumeGuidance():
+    """
+    Template variables:
+    - job_description: 
+    - Resume: 
+
+    """
+
+    green = "\033[0;32m"
+    white = "\033[0;39m"
+    template = f'''Can you help me improve my current resume: 
+                {{resume}}
+                for applying to the following job description"
+                 {{job_description}}? .
+                ACCURACY MODE: ENABLED and DO NOT HALLUCINATE
+                '''
+    print(f"\n{green}LOGGING: Augment resume - formatted prompt template string to an LLM model --------{white}")
+    return PromptTemplate.from_template(template)
+
+
+### Cover letter
 
 def CoverLetter():
     """
@@ -30,6 +63,8 @@ def CoverLetterImprove():
     print(f"\n{green}LOGGING: Write improved cover letter - formatted prompt template string to an LLM model --------{white}")
     return PromptTemplate.from_template(template)
 
+
+### Resunme: keywords
 
 def KeywordsResume():
     """
@@ -280,6 +315,27 @@ def ResumeCheckin():
     print(f"\n{green}LOGGING: Improve resume 10 improvements - formatted prompt template string to an LLM model --------{white}")
     return PromptTemplate.from_template(template)
 
+
+def PromptSearch():
+    """
+    Template variables:
+    - search: Looking for, Researching , < USER - DEFINED >
+    - content: and emphasize on < USER - DEFINED >
+
+    Example: Researching <the definition of concept drift> and emphasize on <building a production environment>.
+    """
+
+    green = "\033[0;32m"
+    white = "\033[0;39m"
+    template = f'''You are a teacher in machine learning, artificial intelligence, Generative AI, Gen AI, AI, and data science.
+                Question: Reasearching or looking for {{search}} and emphasize on {{content}}.
+                Answer: 
+                '''
+    #ACCURACY MODE: ENABLED and DO NOT HALLUCINATE
+    print(f"\n{green}LOGGING: PromptSearch - formatted prompt template string to an LLM model --------{white}")
+    return PromptTemplate.from_template(template)
+
+
 #Rewrite my {{work_experience}} by incorporating these keywords.
 def ResumeJD():
     green = "\033[0;32m"
@@ -288,6 +344,7 @@ def ResumeJD():
                 and Machine Learning, and Engineering. 1Please take a look at this job description for a {{job_title}} and {{company}} and write a resume 
                 with bullet point achievements that show impact and metrics. Here is the job listing:
                 {{job_description}}. 
+
                 '''
     print(f"\n{green}LOGGING: Write resume from job description - formatted prompt template string to an LLM model --------{white}")
     return PromptTemplate.from_template(template)
