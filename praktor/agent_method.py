@@ -17,7 +17,7 @@ from LLM.prompt import (CoverLetter,
 from LLM.llm_interface import LLMAdapter
 from LLM.llm_factory import LLMFactory
 
-from retrieve_generate import RAGSP
+from retrieve_generate import RAGSP, RAGTY
 
 from settings import create_log, MODEL, MD, PDF
 from utils import save_markdown, read_markdown
@@ -33,10 +33,18 @@ def ThankYouEmail(data: Dict) -> None:
 
     llm = LLMAdapter(PromptEmailThankYou())
     response = llm.generate(data=data)
-    print(f'{response}')
+    log.debug(f'{response}')
     del llm
 
     save_markdown(MD+'communication_thank_you.md', response)
+
+    #rag = RAGTY(PromptEmailThankYou())
+    #log.debug(f'Start generate - data: {data}')
+    #response = rag.generate(adjective=data['adjective'], position=data['position'], content=data['content'])
+    #log.debug(f'Response - {response}')
+    #del rag
+    #save_markdown(MD+'communication_rag_thank_you.md', response)
+
 
 def WriteCoverLetter(data: Dict) -> None:
     """

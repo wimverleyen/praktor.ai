@@ -5,7 +5,8 @@ import logging
 
 load_dotenv()
 
-MODEL = 'llama3.1'
+#MODEL = 'llama3.1'
+MODEL = 'qwen2.5'
 
 MD = os.getenv('MD')
 PDF = os.getenv('PDF')

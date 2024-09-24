@@ -80,7 +80,9 @@ class Agent:
             ValueError('RabbitMQ: Connection/channel not open')
 
         #data = {'adjective':'professional', 'position': 'AVP Data Science', 'content':'Write a thank you email after an interview. Her expertise in IT Strategy, digital transformation, very thoughtful questions around value proposition were outstanding and great example for the organization.'}
-        data = {'adjective':'professional', 'position': 'AVP Data Science', 'content':'Write a thank you email after an interview. Her expertise in IT Strategy, digital transformation, very thoughtful questions around value proposition were outstanding and great example for the organization.'}
+        #data = {'adjective':'professional', 'position': 'AVP Data Science', 'content':'Write a thank you email after an interview. His experience with data and analytics. The very insightfull perspective of consumer related analytics. Finally, the insights how digital marketing can enable a lot of business value creation'}
+        #data = {'adjective':'professional', 'position': 'AVP Data Science', 'content':'Write a thank you email after an interview. His experience at Humana and the need for prioritizing AI/ML use cases on value creation. His open and transparent feedback on retention for the data science team.'}
+        data = {'adjective':'professional', 'position': 'AVP Data Science', 'content':'Write a thank you email after an interview. His expertise in AI/ML, manaaging innovation, great questions on use cases and execution of most impactful use cases at Humana.'}
         channel.basic_publish(exchange='', routing_key='agentic', body=dumps(data))
 
 

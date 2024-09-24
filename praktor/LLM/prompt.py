@@ -5,7 +5,7 @@ def PromptEmailThankYou():
 
     green = "\033[0;32m"
     white = "\033[0;39m"
-    template = f'''You are a business executive and are responding as a lead data scientist.
+    template = f'''You are a business executive and chief data scientist.
                 Question: Write me a thank you email {{adjective}} and respond on {{content}} for {{position}}'
                 Answer: 
                 ACCURACY MODE: ENABLED and DO NOT HALLUCINATE
