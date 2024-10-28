@@ -7,7 +7,7 @@ from json import loads
 from functools import partial
 from typing import Callable, Any
 
-from agent_method import WriteCoverLetter, JobApplication, KeywordsExtraction, JobInterview, ThankYouEmail
+from agent_method import WriteCoverLetter, JobApplication, KeywordsExtraction, JobInterview, ThankYouEmail, Search, Message
 
 from settings import create_log
 
@@ -38,7 +38,10 @@ channel.basic_qos(prefetch_count=1)
 
 #on_message_callback = partial(on_message_received, args=(JobApplication))
 #on_message_callback = partial(on_message_received, args=(JobInterview))
-on_message_callback = partial(on_message_received, args=(ThankYouEmail))
+
+#on_message_callback = partial(on_message_received, args=(ThankYouEmail))
+#on_message_callback = partial(on_message_received, args=(Search))
+on_message_callback = partial(on_message_received, args=(Message))
 #on_message_callback = partial(on_message_received, args=(KeywordsExtraction))
 channel.basic_consume(queue='agentic', on_message_callback=on_message_callback)
 

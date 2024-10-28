@@ -284,7 +284,6 @@ def ResumeAskImprove():
     print(f"\n{green}LOGGING: Improve resume - formatted prompt template string to an LLM model --------{white}")
     return PromptTemplate.from_template(template)
 
-
 def ResumeCheckup():
 
     """
@@ -335,6 +334,24 @@ def PromptSearch():
     print(f"\n{green}LOGGING: PromptSearch - formatted prompt template string to an LLM model --------{white}")
     return PromptTemplate.from_template(template)
 
+def PromptMessage():
+    """
+    Template variables:
+    - : Looking for, Researching , < USER - DEFINED >
+    - content: and emphasize on < USER - DEFINED >
+
+    Example: Researching <the definition of concept drift> and emphasize on <building a production environment>.
+    """
+
+    green = "\033[0;32m"
+    white = "\033[0;39m"
+    template = f'''You are a top business executive specialized in artificial intelligence, Generative AI, Gen AI, AI, and data science.
+                Question: Provide concise and clear communication of {{topic}} and emphasize on {{emotion}}.
+                Answer: 
+                '''
+    #ACCURACY MODE: ENABLED and DO NOT HALLUCINATE
+    print(f"\n{green}LOGGING: PromptMessage - formatted prompt template string to an LLM model --------{white}")
+    return PromptTemplate.from_template(template)
 
 #Rewrite my {{work_experience}} by incorporating these keywords.
 def ResumeJD():

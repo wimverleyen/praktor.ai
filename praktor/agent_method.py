@@ -13,7 +13,8 @@ from LLM.prompt import (CoverLetter,
                          ResumeJD,
                          ResumeTailor,
                          PromptEmailThankYou,
-                         PromptSearch)
+                         PromptSearch,
+                         PromptMessage)
 from LLM.llm_interface import LLMAdapter
 from LLM.llm_factory import LLMFactory
 
@@ -26,6 +27,24 @@ from typing import Dict
 
 log = create_log()
 
+
+def Message(data: Dict) -> None:
+
+    llm = LLMAdapter(PromptMessage())
+    response = llm.generate(data=data)
+    log.debug(f'{response}')
+    del llm
+
+    save_markdown(MD+'communication_message.md', response)
+
+def Search(data: Dict) -> None:
+
+    llm = LLMAdapter(PromptSearch())
+    response = llm.generate(data=data)
+    log.debug(f'{response}')
+    del llm
+
+    save_markdown(MD+'communication_search.md', response)
 
 #def WriteCoverLetter(resume_fn: str='', job_description_fn: str='') -> None:
 
@@ -227,3 +246,5 @@ def JobInterview(data: Dict) -> None:
     save_markdown(MD+'SP_RAG_question.md', response)
 
     rag.references(text=data['search']+data['content'])
+
+#def Question():

@@ -44,7 +44,6 @@ class Agent:
             # Abstract away the data class for an agent - different agents; not sure many to many (1-1)?
             data = {}
 
-
             data['job_title'] = 'Director of Data Science'
             data['company'] = 'Peloton'
             # for the coverletter agent!
@@ -85,6 +84,73 @@ class Agent:
         data = {'adjective':'professional', 'position': 'AVP Data Science', 'content':'Write a thank you email after an interview. His expertise in AI/ML, manaaging innovation, great questions on use cases and execution of most impactful use cases at Humana.'}
         channel.basic_publish(exchange='', routing_key='agentic', body=dumps(data))
 
+    def search(self):
+        ### Producer: sent agent request
+
+        connection_parameters = pika.ConnectionParameters('localhost')
+        connection = pika.BlockingConnection(connection_parameters)
+        channel = connection.channel()
+        if connection.is_open and channel.is_open:
+            channel.queue_declare(queue='agentic')
+        else:
+            ValueError('RabbitMQ: Connection/channel not open')
+
+        #data = {'search':'leadership style for health care insurance', 'content':'research and development, innovation, and 3 behavioral you want to establish'}
+        data = {'search':'strategic vision for health care insurance', 'content':'research and development, innovation, and vision for Gen AI'}
+        channel.basic_publish(exchange='', routing_key='agentic', body=dumps(data))
+
+    def message(self):
+        ### Producer: sent agent request
+
+        connection_parameters = pika.ConnectionParameters('localhost')
+        connection = pika.BlockingConnection(connection_parameters)
+        channel = connection.channel()
+        if connection.is_open and channel.is_open:
+            channel.queue_declare(queue='agentic')
+        else:
+            ValueError('RabbitMQ: Connection/channel not open')
+
+        
+        #data = {'topic':'leadership style, continuation and transition to my leadership, when I engage, I am always available', 'emotion':'care, empathy, committed, clear'}
+        #data = {'topic':'recognize when to listen, learn, and lead', 'emotion':'care, empathy, committed, clear'}
+        data = {'topic':'Jasper newbown baby almost month old, new job as AVP in Data Science', 'emotion':'care, empathy, respectful'}
+        channel.basic_publish(exchange='', routing_key='agentic', body=dumps(data))
+
+    def coverletter(self):
+
+        connection_parameters = pika.ConnectionParameters('localhost')
+        connection = pika.BlockingConnection(connection_parameters)
+        channel = connection.channel()
+        if connection.is_open and channel.is_open:
+            channel.queue_declare(queue='agentic')
+        else:
+            ValueError('RabbitMQ: Connection/channel not open')
+
+        data = {}
+
+        data['job_title'] = 'Senior Director, Marketing Data Science'
+        data['company'] = 'Peloton'
+        # for the coverletter agent!
+        #data['skills']
+        ##data['skills'] = '- B.S. in Electrical Engineering, Computer Science, or other STEM discipline and 8+ years of relevant work experience. - Analytical, project management, problem-solving, interpersonal, leadership skills. - Self-starter with willingness to take initiative, support strategic priorities, take ownership of delegated projects/initiatives and contribute to results, and ability to work with a minimum supervision - Proﬁcient in a combination of the following areas: AI assurance, automated reasoning, logic, programming languages, assurance cases, hardware-software co-design, optimization, and system dynamics & control. - Familiarity with model-based system engineering and software engineering. - Familiarity with formal analysis, veriﬁcation tools and methodologies for cyber-physical systems including AI-enabled systems.'
+
+        # Read job description
+        loader = PyPDFLoader(PDF+'Peloton_job_description.pdf')
+        pages = loader.load()
+        job_description = ''
+        for page in pages:
+            job_description += page.page_content
+        log.debug(f'DEBUG: urls read_pdf %s', job_description)
+        del loader
+            
+        data['job_description'] = job_description
+        save_markdown(MD+'job_description.md', job_description)
+
+        #data = {'adjective':'professional', 'position': 'AVP Data Science', 'content':'Write a thank you email after an interview. Her expertise in IT Strategy, digital transformation, very thoughtful questions around value proposition were outstanding and great example for the organization.'}
+        #data = {'adjective':'professional', 'position': 'AVP Data Science', 'content':'Write a thank you email after an interview. His experience with data and analytics. The very insightfull perspective of consumer related analytics. Finally, the insights how digital marketing can enable a lot of business value creation'}
+        #data = {'adjective':'professional', 'position': 'AVP Data Science', 'content':'Write a thank you email after an interview. His experience at Humana and the need for prioritizing AI/ML use cases on value creation. His open and transparent feedback on retention for the data science team.'}
+        data = {'adjective':'professional', 'position': 'AVP Data Science', 'content':'Write a thank you email after an interview. His expertise in AI/ML, manaaging innovation, great questions on use cases and execution of most impactful use cases at Humana.'}
+        channel.basic_publish(exchange='', routing_key='agentic', body=dumps(data))
 
 
 class TestAgent(TestCase):
@@ -103,20 +169,41 @@ class TestAgent(TestCase):
         #data['company'] = 'Raytheon Technologies (RTX)'
         #data['skills'] = '- B.S. in Electrical Engineering, Computer Science, or other STEM discipline and 8+ years of relevant work experience. - Analytical, project management, problem-solving, interpersonal, leadership skills. - Self-starter with willingness to take initiative, support strategic priorities, take ownership of delegated projects/initiatives and contribute to results, and ability to work with a minimum supervision - Proﬁcient in a combination of the following areas: AI assurance, automated reasoning, logic, programming languages, assurance cases, hardware-software co-design, optimization, and system dynamics & control. - Familiarity with model-based system engineering and software engineering. - Familiarity with formal analysis, veriﬁcation tools and methodologies for cyber-physical systems including AI-enabled systems.'
 
-
-
         #agent.process()
 
         #llm = agent.create_llm(MODEL)
         #llm = agent.create_llm('gpt-3.5-turbo-instruct')
         #print(llm.get_model_info())
         #print(llm.generate_text(["Hello, world!"]))
+        del agent
     
     def testBAgent(self):
 
         agent = Agent()
-        agent.thankyou()
+        #agent.thankyou()
+        del agent
 
+    def testCAgent(self):
+
+        agent = Agent()
+
+        #agent.coverletter()
+
+        del agent
+
+
+    def testCAgent(self):
+
+        agent = Agent()
+        #agent.search()
+        agent.message()
+        del agent
+
+    def testDAgent(self):
+
+        agent = Agent()
+        #agent.message()
+        del agent
 
 
 
