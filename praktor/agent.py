@@ -60,11 +60,12 @@ class Agent:
             del loader
             
             data['job_description'] = job_description
+            data['agent_type'] = 'job_application'
             save_markdown(MD+'job_description.md', job_description)
 
             channel.basic_publish(exchange='', routing_key='agentic', body=dumps(data))
-                        
-    
+
+
             #time.sleep(random.randint(1, 4))
     #def parallel_clone(self): clone agent across similar tasks, e.g., apply for 10 jobs
     def thankyou(self):
@@ -81,7 +82,7 @@ class Agent:
         #data = {'adjective':'professional', 'position': 'AVP Data Science', 'content':'Write a thank you email after an interview. Her expertise in IT Strategy, digital transformation, very thoughtful questions around value proposition were outstanding and great example for the organization.'}
         #data = {'adjective':'professional', 'position': 'AVP Data Science', 'content':'Write a thank you email after an interview. His experience with data and analytics. The very insightfull perspective of consumer related analytics. Finally, the insights how digital marketing can enable a lot of business value creation'}
         #data = {'adjective':'professional', 'position': 'AVP Data Science', 'content':'Write a thank you email after an interview. His experience at Humana and the need for prioritizing AI/ML use cases on value creation. His open and transparent feedback on retention for the data science team.'}
-        data = {'adjective':'professional', 'position': 'AVP Data Science', 'content':'Write a thank you email after an interview. His expertise in AI/ML, manaaging innovation, great questions on use cases and execution of most impactful use cases at Humana.'}
+        data = {'adjective':'professional', 'position': 'AVP Data Science', 'content':'Write a thank you email after an interview. His expertise in AI/ML, manaaging innovation, great questions on use cases and execution of most impactful use cases at Humana.', 'agent_type': 'thank_you'}
         channel.basic_publish(exchange='', routing_key='agentic', body=dumps(data))
 
     def search(self):
@@ -96,7 +97,7 @@ class Agent:
             ValueError('RabbitMQ: Connection/channel not open')
 
         #data = {'search':'leadership style for health care insurance', 'content':'research and development, innovation, and 3 behavioral you want to establish'}
-        data = {'search':'strategic vision for health care insurance', 'content':'research and development, innovation, and vision for Gen AI'}
+        data = {'search':'strategic vision for health care insurance', 'content':'research and development, innovation, and vision for Gen AI', 'agent_type': 'search'}
         channel.basic_publish(exchange='', routing_key='agentic', body=dumps(data))
 
     def message(self):
@@ -113,7 +114,7 @@ class Agent:
         
         #data = {'topic':'leadership style, continuation and transition to my leadership, when I engage, I am always available', 'emotion':'care, empathy, committed, clear'}
         #data = {'topic':'recognize when to listen, learn, and lead', 'emotion':'care, empathy, committed, clear'}
-        data = {'topic':'Jasper newbown baby almost month old, new job as AVP in Data Science', 'emotion':'care, empathy, respectful'}
+        data = {'topic':'Jasper newbown baby almost month old, new job as AVP in Data Science', 'emotion':'care, empathy, respectful', 'agent_type': 'message'}
         channel.basic_publish(exchange='', routing_key='agentic', body=dumps(data))
 
     def coverletter(self):
@@ -144,12 +145,9 @@ class Agent:
         del loader
             
         data['job_description'] = job_description
+        data['agent_type'] = 'cover_letter'
         save_markdown(MD+'job_description.md', job_description)
 
-        #data = {'adjective':'professional', 'position': 'AVP Data Science', 'content':'Write a thank you email after an interview. Her expertise in IT Strategy, digital transformation, very thoughtful questions around value proposition were outstanding and great example for the organization.'}
-        #data = {'adjective':'professional', 'position': 'AVP Data Science', 'content':'Write a thank you email after an interview. His experience with data and analytics. The very insightfull perspective of consumer related analytics. Finally, the insights how digital marketing can enable a lot of business value creation'}
-        #data = {'adjective':'professional', 'position': 'AVP Data Science', 'content':'Write a thank you email after an interview. His experience at Humana and the need for prioritizing AI/ML use cases on value creation. His open and transparent feedback on retention for the data science team.'}
-        data = {'adjective':'professional', 'position': 'AVP Data Science', 'content':'Write a thank you email after an interview. His expertise in AI/ML, manaaging innovation, great questions on use cases and execution of most impactful use cases at Humana.'}
         channel.basic_publish(exchange='', routing_key='agentic', body=dumps(data))
 
 

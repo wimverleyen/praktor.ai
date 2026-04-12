@@ -7,8 +7,7 @@ def PromptEmailThankYou():
     white = "\033[0;39m"
     template = f'''You are a business executive and chief data scientist.
                 Question: Write me a thank you email {{adjective}} and respond on {{content}} for {{position}}'
-                Answer: 
-                ACCURACY MODE: ENABLED and DO NOT HALLUCINATE
+                Answer:
                 '''
     print(f"\n{green}LOGGING: PromptEmailThank - formatted prompt template string to an LLM model --------{white}")
     return PromptTemplate.from_template(template)
@@ -23,11 +22,10 @@ def AugmentResumeGuidance():
 
     green = "\033[0;32m"
     white = "\033[0;39m"
-    template = f'''Can you help me improve my current resume: 
+    template = f'''Can you help me improve my current resume:
                 {{resume}}
-                for applying to the following job description"
-                 {{job_description}}? .
-                ACCURACY MODE: ENABLED and DO NOT HALLUCINATE
+                for applying to the following job description:
+                {{job_description}}?
                 '''
     print(f"\n{green}LOGGING: Augment resume - formatted prompt template string to an LLM model --------{white}")
     return PromptTemplate.from_template(template)

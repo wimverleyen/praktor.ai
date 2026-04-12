@@ -1,31 +1,46 @@
 from pika import ConnectionParameters, BlockingConnection, BasicProperties
 
-import time
-import random
 from json import loads
 
-from functools import partial
-from typing import Callable, Any
-
 from agent_method import WriteCoverLetter, JobApplication, KeywordsExtraction, JobInterview, ThankYouEmail, Search, Message
+from schemas import parse_message
 
 from settings import create_log
 
 log = create_log()
 
-def on_message_received(ch, method, properties: BasicProperties, body, args):
-    """
-    Execute agent method with the body as json structure.
+_DISPATCH = {
+    "job_application": JobApplication,
+    "cover_letter": WriteCoverLetter,
+    "keywords_extraction": KeywordsExtraction,
+    "job_interview": JobInterview,
+    "thank_you": ThankYouEmail,
+    "search": Search,
+    "message": Message,
+}
 
-    """
-    
-    data = loads(body)
-    log.debug(f'callback function - data keys: {data.keys()}')
 
-    args(data)
+def on_message_received(ch, method, properties: BasicProperties, body):
+    """Route an incoming queue message to the appropriate agent method."""
+    try:
+        raw = loads(body)
+        log.debug(f'received message with keys: {list(raw.keys())}')
 
-    ch.basic_ack(delivery_tag=method.delivery_tag)
-    print(f'finished processing and acknowledged message')
+        msg = parse_message(raw)
+        handler = _DISPATCH[msg.agent_type]
+        log.debug(f'dispatching to handler: {handler.__name__}')
+
+        handler(msg.model_dump())
+
+        ch.basic_ack(delivery_tag=method.delivery_tag)
+        log.debug(f'acknowledged message agent_type={msg.agent_type}')
+        print(f'finished processing [{msg.agent_type}]')
+
+    except Exception as e:
+        log.error(f'error processing message: {e}', exc_info=True)
+        ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+        print(f'failed to process message: {e}')
+
 
 connection_parameters = ConnectionParameters('localhost')
 connection = BlockingConnection(connection_parameters)
@@ -33,17 +48,7 @@ channel = connection.channel()
 channel.queue_declare(queue='agentic')
 channel.basic_qos(prefetch_count=1)
 
-## JobApplication - agent_method
+channel.basic_consume(queue='agentic', on_message_callback=on_message_received)
 
-
-#on_message_callback = partial(on_message_received, args=(JobApplication))
-#on_message_callback = partial(on_message_received, args=(JobInterview))
-
-#on_message_callback = partial(on_message_received, args=(ThankYouEmail))
-#on_message_callback = partial(on_message_received, args=(Search))
-on_message_callback = partial(on_message_received, args=(Message))
-#on_message_callback = partial(on_message_received, args=(KeywordsExtraction))
-channel.basic_consume(queue='agentic', on_message_callback=on_message_callback)
-
-print('Ready to receive[agentic]')
+print('Ready to receive [agentic]')
 channel.start_consuming()
