@@ -11,6 +11,9 @@ The script:
   4. Saves the resulting FAISS index to --db-path.
 
 Re-running overwrites the existing store, so run only when the source PDFs change.
+
+For design details on how FAISSMemory is used at runtime, see ARCHITECTURE.md
+(Memory section) and memory/vector.py.
 """
 
 import argparse
