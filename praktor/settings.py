@@ -7,24 +7,32 @@ from logging.handlers import RotatingFileHandler
 
 load_dotenv()
 
-#MODEL = 'llama3.1'
-MODEL = 'qwen2.5'
+# --- Model ---
+MODEL = os.getenv('PRAKTOR_MODEL', 'qwen2.5')
 
+# --- File paths ---
 MD = os.getenv('MD')
 PDF = os.getenv('PDF')
 VECTOR_DB = os.getenv('VECTOR_DB')
 
+# --- Queue ---
+RABBITMQ_URL = os.getenv('RABBITMQ_URL', 'amqp://guest:guest@localhost/')
+CONCURRENCY = int(os.getenv('PRAKTOR_CONCURRENCY', '4'))
+
+# --- Cache ---
+CACHE_DIR = os.getenv('CACHE_DIR', '/tmp/praktor_cache')
+CACHE_TTL = int(os.getenv('CACHE_TTL', '3600'))
+
+# --- Logging ---
 _LOG_FILE = 'praktor.ai.log'
-_MAX_BYTES = 10 * 1024 * 1024  # 10 MB per file
+_MAX_BYTES = 10 * 1024 * 1024  # 10 MB
 _BACKUP_COUNT = 5
 
 
 def create_log(request_id: str | None = None) -> logging.Logger:
     """
     Return a logger backed by a rotating file handler.
-
-    Pass a request_id to tag every log line with a correlation ID so that
-    a single request can be traced end-to-end across agent → queue → method.
+    Pass request_id to correlate a single request end-to-end.
     """
     name = f'praktor.{request_id}' if request_id else 'praktor'
     log = logging.getLogger(name)
