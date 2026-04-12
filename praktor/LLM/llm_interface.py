@@ -104,6 +104,20 @@ class AsyncLLMAdapter:
             prompt_text = str(data)
         return hashlib.sha256(f"{self._model}:{prompt_text}".encode()).hexdigest()
 
+    def render(self, data: dict) -> str:
+        """
+        Return the fully rendered prompt string.
+
+        Used by Agent.run() to run GovernancePolicy pre-execution checks
+        on the exact text the LLM will see, before calling astream().
+        """
+        try:
+            return self._prompt.format(
+                **{k: v for k, v in data.items() if k in self._prompt.input_variables}
+            )
+        except Exception:
+            return str(data)
+
     async def ainvoke(self, data: dict, call_span: Any = None) -> str:
         """
         Single blocking call with retry. Returns full response string.

@@ -195,6 +195,7 @@ class Span:
         else:
             log.info(f"SPAN {json.dumps(record)}")
 
+<<<<<<< HEAD
     def _record_trajectory(self, event: TrajectoryEvent) -> None:
         self._trajectory.append(event)
 
