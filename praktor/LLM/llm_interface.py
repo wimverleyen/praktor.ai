@@ -109,8 +109,8 @@ class AsyncLLMAdapter:
         """
         Return the fully rendered prompt string.
 
-        Used by Agent.run() to run GovernancePolicy pre-execution checks
-        on the exact text the LLM will see, before calling astream().
+        Useful for debugging, logging, and any caller that needs to inspect
+        the exact text the LLM will see before calling astream().
         """
         try:
             return self._prompt.format(

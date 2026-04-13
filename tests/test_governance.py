@@ -496,6 +496,118 @@ class TestAgentGovernanceHooks:
         assert chunks == ["plain response"]
 
     @pytest.mark.asyncio
+    async def test_pre_execution_redact_scrubs_payload(self, tmp_path):
+        """REDACT policy replaces SSN in each payload field before the LLM sees it."""
+        from core.agent import Agent
+        from core.agent_definition import AgentDefinition
+        from governance.policy import GovernancePolicy, DetectorConfig, PolicyAction
+
+        received_payloads: list[dict] = []
+
+        policy = GovernancePolicy(
+            pre_execution=[
+                DetectorConfig(
+                    detector_class="governance.detectors.RegexDetector",
+                    entities=["US_SSN"],
+                    action=PolicyAction.REDACT,
+                    threshold=0.8,
+                )
+            ],
+            audit_sinks=[AuditSinkType.STDOUT],
+        )
+        defn = AgentDefinition(
+            name="gov_test",
+            prompt_template="Process: {text}",
+            input_schema=_GovInput,
+            governance_policy=policy,
+        )
+        agent = Agent(defn)
+
+        async def _capture_stream(payload):
+            received_payloads.append(dict(payload))
+            yield "safe response"
+
+        with patch.object(agent._adapter, "astream", side_effect=_capture_stream):
+            with patch("governance.audit.StdoutAuditSink", return_value=MagicMock(write=AsyncMock())):
+                chunks = []
+                async for chunk in agent.run(
+                    {"agent_type": "gov_test", "text": "Patient SSN is 123-45-6789", "session_id": ""},
+                    session_id="s1",
+                ):
+                    chunks.append(chunk)
+
+        assert chunks == ["safe response"]
+        assert len(received_payloads) == 1
+        # The SSN must NOT appear in the payload that reached the LLM
+        assert "123-45-6789" not in received_payloads[0]["text"]
+        assert "[REDACTED:US_SSN]" in received_payloads[0]["text"]
+
+    @pytest.mark.asyncio
+    async def test_post_execution_block_raises(self, tmp_path):
+        """BLOCK on post_execution raises after the LLM response contains PHI."""
+        from core.agent import Agent
+        from core.agent_definition import AgentDefinition
+        from governance.policy import GovernancePolicy, DetectorConfig, PolicyAction
+
+        policy = GovernancePolicy(
+            post_execution=[
+                DetectorConfig(
+                    detector_class="governance.detectors.RegexDetector",
+                    entities=["US_SSN"],
+                    action=PolicyAction.BLOCK,
+                )
+            ],
+            audit_sinks=[AuditSinkType.STDOUT],
+        )
+        defn = AgentDefinition(
+            name="gov_test",
+            prompt_template="Process: {text}",
+            input_schema=_GovInput,
+            governance_policy=policy,
+        )
+        agent = Agent(defn)
+
+        # LLM returns a response containing an SSN
+        async def _leak_ssn(payload):
+            yield "The SSN is 987-65-4321"
+
+        with patch.object(agent._adapter, "astream", side_effect=_leak_ssn):
+            with patch("governance.audit.StdoutAuditSink", return_value=MagicMock(write=AsyncMock())):
+                with pytest.raises(GovernancePolicyViolation, match="BLOCK"):
+                    async for _ in agent.run(
+                        {"agent_type": "gov_test", "text": "clean input", "session_id": ""},
+                        session_id="s1",
+                    ):
+                        pass
+
+    @pytest.mark.asyncio
+    async def test_kafka_sink_raises_not_implemented(self):
+        """Configuring a KAFKA sink raises NotImplementedError immediately on write."""
+        from core.agent import Agent
+        from core.agent_definition import AgentDefinition
+        from governance.policy import GovernancePolicy, AuditSinkType
+
+        policy = GovernancePolicy(audit_sinks=[AuditSinkType.KAFKA])
+        defn = AgentDefinition(
+            name="gov_test",
+            prompt_template="Answer: {text}",
+            input_schema=_GovInput,
+            governance_policy=policy,
+        )
+        agent = Agent(defn)
+
+        async def _fake_stream(payload):
+            yield "result"
+
+        with patch.object(agent._adapter, "astream", side_effect=_fake_stream):
+            with pytest.raises(NotImplementedError, match="Phase 2"):
+                async for _ in agent.run(
+                    {"agent_type": "gov_test", "text": "safe input", "session_id": ""},
+                    session_id="s1",
+                ):
+                    pass
+
+    @pytest.mark.asyncio
     async def test_audit_entry_written_to_local_file(self, tmp_path):
         """Successful run with LOCAL_FILE sink produces a valid JSONL audit entry."""
         from core.agent import Agent
