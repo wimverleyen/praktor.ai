@@ -66,7 +66,7 @@ class TestRouter:
     async def test_dispatch_routes_to_agent(self):
         self.router.register(_SEARCH_DEF)
 
-        async def _fake_run(payload, session_id):
+        async def _fake_run(payload, session_id, caller_identity="anonymous"):
             yield "chunk1"
             yield "chunk2"
 
@@ -86,7 +86,7 @@ class TestRouter:
 
         captured_session: list[str] = []
 
-        async def _fake_run(payload, session_id):
+        async def _fake_run(payload, session_id, caller_identity="anonymous"):
             captured_session.append(session_id)
             yield "ok"
 
@@ -105,7 +105,7 @@ class TestRouter:
 
         captured_session: list[str] = []
 
-        async def _fake_run(payload, session_id):
+        async def _fake_run(payload, session_id, caller_identity="anonymous"):
             captured_session.append(session_id)
             yield "ok"
 

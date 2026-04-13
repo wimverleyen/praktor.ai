@@ -1,3 +1,4 @@
+from __future__ import annotations
 import asyncio
 from core.tool import ToolResult, register_tool
 from settings import create_log

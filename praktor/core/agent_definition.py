@@ -1,6 +1,13 @@
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 from enum import Enum, auto
+from typing import TYPE_CHECKING
+
 from pydantic import BaseModel
+
+if TYPE_CHECKING:
+    from governance.policy import GovernancePolicy
 
 
 class MemoryPolicy(Enum):
@@ -29,6 +36,10 @@ class AgentDefinition:
 
     Adding a new agent = one file with one AgentDefinition instance.
     No changes to schemas, dispatch tables, or consumers required.
+
+    governance_policy: attach a GovernancePolicy to enable PII/PHI detection,
+    audit logging, and RBAC for this agent. Default None = governance disabled,
+    existing behavior unchanged (fully backwards compatible).
     """
 
     name: str
@@ -66,3 +77,20 @@ class AgentDefinition:
 
     max_steps: int = 1
     """1 = single linear chain. >1 = ReAct tool-use loop (requires tools)."""
+
+    governance_policy: GovernancePolicy | None = None
+    """
+    Optional compliance governance for this agent.
+
+    When set, Agent.run() will:
+    - Run pre_execution DetectorConfigs on all string fields in the payload
+    - Run post_execution DetectorConfigs on the full LLM response
+    - Write an AuditEntry to all configured audit sinks
+    - Raise GovernancePolicyViolation on BLOCK actions
+
+    Governance boundary: detection covers the rendered prompt (all payload string
+    fields) and the final LLM response. Intermediate tool call outputs inside LCEL
+    chains are NOT governed — documented limitation.
+
+    Default None = governance disabled. Backwards compatible with all existing agents.
+    """

@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 Dynamic message schema registry.
 
