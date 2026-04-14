@@ -57,20 +57,67 @@ That's it. One file, one agent, local inference.
 
 ## Installation
 
+### With uv (recommended)
+
 ```bash
-# Core (local inference via Ollama)
-pip install praktor
+# 1. Install uv
+curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# With full PHI detection (names, addresses, medical record numbers)
-pip install praktor[presidio]
-
-# With enterprise audit sinks
-pip install praktor[kafka]   # Kafka audit sink
-pip install praktor[minio]   # MinIO/S3 audit sink
-
-# Development
-pip install praktor[dev]
+# 2. Clone and install
+git clone https://github.com/wimverleyen/praktor.ai.git
+cd praktor.ai
+uv venv && uv pip install -e .
 ```
+
+### With pip
+
+```bash
+git clone https://github.com/wimverleyen/praktor.ai.git
+cd praktor.ai
+python -m venv .venv && source .venv/bin/activate
+pip install -e .
+```
+
+### With Docker
+
+```bash
+git clone https://github.com/wimverleyen/praktor.ai.git
+cd praktor.ai
+docker build -t praktor .
+docker compose up
+```
+
+### Optional extras
+
+| Extra | What it adds |
+|-------|-------------|
+| `presidio` | ML-based PHI detection (names, addresses, medical record numbers) |
+| `kafka` | `KafkaAuditSink` for high-throughput audit logs |
+| `minio` | `MinIOAuditSink` for S3-compatible object storage |
+| `otel` | OpenTelemetry trace export |
+| `docs` | mkdocs + mkdocs-material for building this site |
+| `dev` | pytest, pytest-asyncio, black |
+
+Install one or many:
+
+```bash
+uv pip install -e ".[presidio]"
+uv pip install -e ".[kafka,minio,otel]"
+uv pip install -e ".[dev,presidio,kafka,minio,otel,docs]"   # everything
+```
+
+### Prerequisites
+
+praktor runs local LLMs via [Ollama](https://ollama.ai):
+
+```bash
+brew install ollama                              # macOS
+curl -fsSL https://ollama.ai/install.sh | sh    # Linux
+ollama pull qwen2.5
+ollama serve                                    # if not already running
+```
+
+Set `PRAKTOR_MODEL` to switch models (`llama3.1`, `mistral`, `phi3`, anything Ollama supports).
 
 ---
 

@@ -6,30 +6,78 @@ One file to add an agent. One command to test. This document covers project setu
 
 ## Project setup
 
+praktor uses [`uv`](https://github.com/astral-sh/uv) for dependency management (10x faster than pip, automatic venv, reproducible).
+
+**1. Install uv**
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh   # macOS / Linux
+# or: brew install uv
+# or: pipx install uv
+```
+
+**2. Clone and install**
+
 ```bash
 git clone https://github.com/wimverleyen/praktor.ai.git
 cd praktor.ai
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-cp .env.example .env
+
+# Create venv + install in editable mode with dev dependencies
+uv venv && uv pip install -e ".[dev]"
+
+# Or use the Makefile
+make install-dev
 ```
 
-Edit `.env` with your paths. For local LLMs, install [Ollama](https://ollama.ai) and pull a model:
+**3. Configure environment**
 
 ```bash
+cp .env.example .env
+# edit .env with your paths and API keys
+```
+
+**4. Install Ollama and pull a model** (for local LLM inference)
+
+```bash
+brew install ollama                              # macOS
+curl -fsSL https://ollama.ai/install.sh | sh    # Linux
 ollama pull qwen2.5
 ```
 
-Start RabbitMQ:
+**5. Start RabbitMQ** (only needed for queue-based dispatch)
 
 ```bash
 docker run -d --name rabbitmq -p 5672:5672 rabbitmq:3
 ```
 
-Run tests (no live services needed — everything is mocked):
+**6. Run tests** (no live services needed — everything is mocked)
 
 ```bash
-pytest tests/
+make test
+# or: uv run pytest tests/ -x -v
+```
+
+### Install variants
+
+```bash
+make install         # core only
+make install-dev     # + pytest, black (default for contributors)
+make install-all     # + presidio, kafka, minio, otel, docs — everything
+
+# Or individual extras:
+uv pip install -e ".[presidio]"        # ML-based PHI detection
+uv pip install -e ".[kafka,minio]"     # enterprise audit sinks
+uv pip install -e ".[otel]"            # OpenTelemetry trace export
+uv pip install -e ".[docs]"            # mkdocs for building docs
+```
+
+### Docker-based development
+
+If you prefer not to install Python locally:
+
+```bash
+docker build -t praktor --build-arg EXTRAS="dev" .
+docker compose up                   # starts RabbitMQ + consumer
 ```
 
 ---
