@@ -152,6 +152,72 @@ Swap in OpenTelemetry later by replacing `Span._emit()` — the call sites in `c
 
 ---
 
+## Governance (`governance/`)
+
+Optional compliance layer. Attach a `GovernancePolicy` to any `AgentDefinition` to enable PII/PHI detection, audit logging, and RBAC. Default is `governance_policy=None` (zero overhead, existing behavior unchanged).
+
+### GovernancePolicy
+
+```python
+@dataclass
+class GovernancePolicy:
+    pre_execution: list[DetectorConfig]    # Run on payload fields before astream()
+    post_execution: list[DetectorConfig]   # Run on LLM response after streaming
+    evaluation_passes: list[EvaluationPass]  # Score response quality (Phase 2)
+    audit_sinks: list[AuditSinkType]       # Where to write audit entries
+    rbac_required_roles: list[str]         # Require caller token with matching role
+```
+
+### Execution flow with governance
+
+```
+Agent.run(payload, session_id, caller_identity)
+  1. Hash original prompt (tamper-evident log)
+  2. Pre-execution detection: for each payload string field, run detectors
+     - ALLOW: pass through
+     - REDACT: replace matched spans with [REDACTED:<entity_type>] in-place
+     - FLAG: record action, continue
+     - BLOCK: record action, raise GovernancePolicyViolation
+  3. LLM execution (astream) — payload is now redacted
+  4. Post-execution detection on full response
+  5. Evaluation passes: score response, record in audit_entry (Phase 2)
+  6. Write AuditEntry to all configured sinks
+```
+
+### PII/PHI Detection
+
+Two built-in detectors behind the `PIIDetector` protocol:
+
+- **RegexDetector** — zero ML deps, pattern-based. Covers US_SSN, PHONE_NUMBER, EMAIL_ADDRESS, DATE_OF_BIRTH, US_PASSPORT, CREDIT_CARD. Always returns `score=1.0`.
+- **PresidioDetector** — ML-based via Microsoft Presidio. Optional: `pip install praktor[presidio]`. Lazy-loads spaCy model on first call.
+
+Custom detectors implement `PIIDetector.detect(text, entities) -> list[DetectionResult]`.
+
+### Audit Log
+
+Hash-chained JSONL entries. Each `AuditEntry` links to the previous via `previous_entry_hash` (SHA-256). First entry uses `"genesis"`. Chain integrity makes silent tampering detectable.
+
+- `LocalFileAuditSink` — append-only JSONL with `filelock` for concurrent writes (safe for CONCURRENCY <= 8)
+- `StdoutAuditSink` — development/testing
+- `KafkaAuditSink` — Avro messages to configurable topic (Phase 2, `pip install praktor[kafka]`)
+- `MinIOAuditSink` — JSON objects by date partition (Phase 2, `pip install praktor[minio]`)
+
+PHI is never stored in audit logs. `prompt_hash` and `response_hash` are SHA-256 digests only.
+
+### RBAC
+
+Opt-in via `PRAKTOR_RBAC_SECRET` env var. HMAC-SHA256 signed tokens with 5-minute TTL and in-process replay protection.
+
+- Fail-closed: `rbac_required_roles` non-empty + secret absent = `ConfigurationError` at registration time
+- Router verifies token before dispatching to agent
+- In-process replay cache via bounded deque + set (known limitation: not cross-process)
+
+### Governance boundary (known limitation)
+
+Detection runs on individual payload field values (pre-execution) and the full LLM response string (post-execution). Intermediate tool call outputs inside LCEL chains are NOT governed. Orgs with mid-chain sensitivity should structure agents so sensitive outputs appear as the final response.
+
+---
+
 ## What's deferred (intentionally)
 
 - **Multi-agent orchestration** — agents calling other agents requires a message graph, not a dispatch dict

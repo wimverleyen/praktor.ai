@@ -1,5 +1,44 @@
 # Changelog
 
+## v0.3.0 — Phase 2: Governance Polish + Enterprise Readiness (in progress)
+
+### New
+
+- **EvaluationPass** — post-execution scoring protocol with `RegexToxicityEvaluator` and `EmbeddingRelevanceEvaluator`
+- **KafkaAuditSink** — Avro messages to configurable topic (`pip install praktor[kafka]`)
+- **MinIOAuditSink** — JSON objects partitioned by date (`pip install praktor[minio]`)
+- **CI/CD** — GitHub Actions: test on PR/push, benchmark on merge, PyPI release on tag
+- **HIPAA deployment guide** — `docs/compliance/hipaa.md`
+- **mkdocs API reference** — auto-generated from docstrings
+
+### Fixed
+
+- `PolicyAction.REDACT` now actually replaces matched spans with `[REDACTED:<entity_type>]` in payload fields before LLM execution
+- Pre-execution governance runs per-field (not on a detached scratch variable)
+- `GovernancePolicyViolation` exception handler now sets `flagged` and `otel_trace_id` before audit write
+- `AsyncLLMAdapter.render()` docstring corrected (was claiming usage by `Agent.run()`)
+
+---
+
+## v0.2.0 — Phase 1: Governance Foundation
+
+### New
+
+- **GovernancePolicy** on `AgentDefinition` — declarative compliance config (opt-in, backwards compatible)
+- **PII/PHI detection** — `RegexDetector` (zero-dep, 6 patterns) + `PresidioDetector` (optional ML-based)
+- **PolicyAction** enum — ALLOW, REDACT, FLAG, BLOCK with pre/post execution hooks
+- **AuditEntry** — hash-chained JSONL entries with SHA-256 prompt/response digests (PHI never stored)
+- **LocalFileAuditSink** — append-only with `filelock` concurrent write safety
+- **StdoutAuditSink** — for development/testing
+- **RBAC** — HMAC-SHA256 tokens, 5-min TTL, in-process replay protection, fail-closed
+- **OpenTelemetry Span wrapper** — `otel_trace_id` propagated to `AuditEntry`
+- **Transport protocol** — `DirectTransport`, `RabbitMQTransport`, `HTTPTransport`
+- **Benchmark suite** — framework overhead measurement (baseline, no-governance, regex-detector)
+- **pyproject.toml** — hatchling build, `[presidio]`, `[otel]`, `[dev]` extras
+- **48 tests** — full governance coverage, all mocked
+
+---
+
 ## v2.0.0 — General Agentic Framework
 
 ### What changed

@@ -52,6 +52,12 @@ from governance.rbac import (
     RBACError,
     ConfigurationError,
 )
+from governance.evaluators import (
+    Evaluator,
+    EvaluationPass,
+    EvaluatorUnavailableError,
+    load_evaluator,
+)
 
 __all__ = [
     # Policy
@@ -68,6 +74,11 @@ __all__ = [
     "PresidioDetector",
     "DetectorUnavailableError",
     "load_detector",
+    # Evaluators
+    "Evaluator",
+    "EvaluationPass",
+    "EvaluatorUnavailableError",
+    "load_evaluator",
     # Audit
     "AuditEntry",
     "AuditSink",

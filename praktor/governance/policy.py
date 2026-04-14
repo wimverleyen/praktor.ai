@@ -63,6 +63,13 @@ class GovernancePolicy:
     audit_sinks: list[AuditSinkType] = field(default_factory=lambda: [AuditSinkType.LOCAL_FILE])
     """Where to write audit entries. KAFKA and MINIO raise NotImplementedError in Phase 1."""
 
+    evaluation_passes: list = field(default_factory=list)
+    """
+    Post-execution scoring passes. Each is an EvaluationPass from
+    governance.evaluators. Scored after post_execution detection.
+    Empty list = no evaluation (Phase 1 default).
+    """
+
     rbac_required_roles: list[str] = field(default_factory=list)
     """
     If non-empty, caller must present a CallerIdentity token with a matching role.

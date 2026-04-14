@@ -581,8 +581,8 @@ class TestAgentGovernanceHooks:
                         pass
 
     @pytest.mark.asyncio
-    async def test_kafka_sink_raises_not_implemented(self):
-        """Configuring a KAFKA sink raises NotImplementedError immediately on write."""
+    async def test_kafka_sink_initializes_without_crash(self):
+        """Configuring a KAFKA sink creates KafkaAuditSink. Write failure is graceful."""
         from core.agent import Agent
         from core.agent_definition import AgentDefinition
         from governance.policy import GovernancePolicy, AuditSinkType
@@ -599,13 +599,17 @@ class TestAgentGovernanceHooks:
         async def _fake_stream(payload):
             yield "result"
 
+        # KafkaAuditSink lazy-initializes the producer on first write.
+        # When aiokafka is not installed, write() fails gracefully (logs
+        # error, does not crash the agent). The agent still returns results.
         with patch.object(agent._adapter, "astream", side_effect=_fake_stream):
-            with pytest.raises(NotImplementedError, match="Phase 2"):
-                async for _ in agent.run(
-                    {"agent_type": "gov_test", "text": "safe input", "session_id": ""},
-                    session_id="s1",
-                ):
-                    pass
+            chunks = []
+            async for chunk in agent.run(
+                {"agent_type": "gov_test", "text": "safe input", "session_id": ""},
+                session_id="s1",
+            ):
+                chunks.append(chunk)
+            assert "".join(chunks) == "result"
 
     @pytest.mark.asyncio
     async def test_audit_entry_written_to_local_file(self, tmp_path):

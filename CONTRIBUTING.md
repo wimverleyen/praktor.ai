@@ -181,6 +181,52 @@ Supported model strings:
 
 ---
 
+## Adding governance to an agent
+
+Any agent becomes governed by adding a `GovernancePolicy`:
+
+```python
+from core.agent_definition import AgentDefinition, MemoryPolicy, OutputSink
+from governance import GovernancePolicy, DetectorConfig, PolicyAction, AuditSinkType
+
+GovernerDefinition = AgentDefinition(
+    name="medical_qa",
+    prompt_template="Answer: {question}",
+    input_schema=MedicalInput,
+    governance_policy=GovernancePolicy(
+        pre_execution=[
+            DetectorConfig(
+                detector_class="governance.detectors.RegexDetector",
+                entities=["US_SSN", "PHONE_NUMBER", "EMAIL_ADDRESS"],
+                action=PolicyAction.REDACT,  # PHI scrubbed before LLM sees it
+            ),
+        ],
+        post_execution=[
+            DetectorConfig(
+                detector_class="governance.detectors.RegexDetector",
+                entities=["US_SSN"],
+                action=PolicyAction.BLOCK,  # Halt if LLM generates PHI
+            ),
+        ],
+        audit_sinks=[AuditSinkType.LOCAL_FILE],
+        rbac_required_roles=["hipaa-reader"],
+    ),
+)
+```
+
+**Actions:**
+
+| Action | Pre-execution | Post-execution |
+|--------|-------------|---------------|
+| `ALLOW` | No-op (default) | No-op |
+| `REDACT` | Replace PHI with `[REDACTED]` before LLM | Replace in response text |
+| `FLAG` | Audit entry flagged, agent continues | Audit entry flagged |
+| `BLOCK` | Raise `GovernancePolicyViolation`, halt | Raise violation, halt |
+
+For evaluation passes (toxicity scoring, relevance checks), see the [Evaluators API docs](https://praktor.ai/api/evaluators/).
+
+---
+
 ## Code style
 
 - Python 3.11+

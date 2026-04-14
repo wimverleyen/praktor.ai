@@ -2,7 +2,44 @@
 
 General-purpose agentic framework built on LangChain, RabbitMQ, and local or hosted LLMs. Ships with a **ReAct tool-use loop**, **OpenTelemetry observability**, **automated prompt optimization**, and a **continuous monitoring stack** (Prometheus, Grafana, SQLite). Comes with built-in agents for job-application workflows — but any agent is one file.
 
-→ [Architecture deep-dive](ARCHITECTURE.md) · [Contributing guide](CONTRIBUTING.md)
+→ [Architecture deep-dive](ARCHITECTURE.md) · [Contributing guide](CONTRIBUTING.md) · [API Docs](https://praktor.ai)
+
+---
+
+## 30-Second Quickstart
+
+No RabbitMQ, no Docker, no cloud API keys. Just Python and a local LLM.
+
+```python
+import asyncio
+from pydantic import BaseModel
+from praktor.core.agent_definition import AgentDefinition, MemoryPolicy, OutputSink
+from praktor.core.agent import Agent
+
+class QuestionInput(BaseModel):
+    agent_type: str = "question"
+    question: str
+    session_id: str = ""
+
+definition = AgentDefinition(
+    name="question",
+    prompt_template="Answer concisely: {question}",
+    input_schema=QuestionInput,
+    llm_model="qwen2.5",
+    memory_policy=MemoryPolicy.NONE,
+    output_sink=OutputSink.STDOUT,
+)
+
+async def main():
+    agent = Agent(definition)
+    payload = {"agent_type": "question", "question": "What is HIPAA?"}
+    async for chunk in agent.run(payload):
+        print(chunk, end="", flush=True)
+
+asyncio.run(main())
+```
+
+That's it. One file, one agent, local inference.
 
 ---
 
