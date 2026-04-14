@@ -1,42 +1,65 @@
-.PHONY: test lint benchmark install install-dev install-all docs serve-docs clean
+.PHONY: test lint benchmark install install-dev install-all docs serve-docs clean docker docker-up docker-run
 
 # Default target
 help:
 	@echo "praktor.ai — development targets"
 	@echo ""
-	@echo "  make install       Install praktor in editable mode"
-	@echo "  make install-dev   Install with dev dependencies"
-	@echo "  make install-all   Install with all optional extras"
+	@echo "  make install       Install praktor in editable mode (uv)"
+	@echo "  make install-dev   Install with dev dependencies (uv)"
+	@echo "  make install-all   Install with all optional extras (uv)"
 	@echo "  make test          Run test suite"
 	@echo "  make lint          Run black formatter check"
 	@echo "  make benchmark     Run governance benchmark suite"
 	@echo "  make docs          Build mkdocs site"
 	@echo "  make serve-docs    Serve docs locally (localhost:8000)"
+	@echo "  make docker        Build Docker image"
+	@echo "  make docker-up     Start RabbitMQ + consumer via docker compose"
+	@echo "  make docker-run    Run a one-off agent in Docker"
 	@echo "  make clean         Remove build artifacts and caches"
 
+# ---- Install (uv) ----
+
 install:
-	pip install -e .
+	uv pip install -e .
 
 install-dev:
-	pip install -e ".[dev]"
+	uv pip install -e ".[dev]"
 
 install-all:
-	pip install -e ".[dev,presidio,kafka,minio,otel,docs]"
+	uv pip install -e ".[dev,presidio,kafka,minio,otel,docs]"
+
+# ---- Test & Lint ----
 
 test:
-	python3 -m pytest tests/ -x -v
+	uv run pytest tests/ -x -v
 
 lint:
-	black --check praktor/ tests/
+	uv run black --check praktor/ tests/
 
 benchmark:
-	cd praktor && python3 -m pytest benchmarks/ -v --tb=short
+	cd praktor && uv run pytest benchmarks/ -v --tb=short
+
+# ---- Docs ----
 
 docs:
-	mkdocs build
+	uv run mkdocs build
 
 serve-docs:
-	mkdocs serve
+	uv run mkdocs serve
+
+# ---- Docker ----
+
+docker:
+	docker build -t praktor .
+
+docker-up:
+	docker compose up
+
+docker-run:
+	@echo "Usage: make docker-run CMD='publish --agent thank_you --data ...'"
+	docker compose run --rm praktor $(CMD)
+
+# ---- Clean ----
 
 clean:
 	rm -rf build/ dist/ *.egg-info .pytest_cache __pycache__
