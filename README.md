@@ -59,13 +59,74 @@ Producer (transport/producer.py)
 
 ---
 
-## Setup
+## Installation
 
-**1. Install dependencies**
+praktor supports three install paths. **`uv` is recommended** (10x faster than pip, reproducible lockfiles, automatic venv).
+
+### Option 1: uv (recommended)
 
 ```bash
-pip install -r requirements.txt
+# Install uv if you don't have it
+curl -LsSf https://astral.sh/uv/install.sh | sh   # macOS / Linux
+# or: brew install uv
+# or: pipx install uv
+
+# Clone and install
+git clone https://github.com/wimverleyen/praktor.ai.git
+cd praktor.ai
+uv venv && uv pip install -e .
+
+# Or via Makefile
+make install         # core
+make install-dev     # + pytest, black
+make install-all     # + presidio, kafka, minio, otel, docs
 ```
+
+### Option 2: pip
+
+```bash
+git clone https://github.com/wimverleyen/praktor.ai.git
+cd praktor.ai
+python -m venv .venv && source .venv/bin/activate
+pip install -e .
+```
+
+### Option 3: Docker
+
+No Python install required. See [Docker section](#running-with-docker) below.
+
+```bash
+docker build -t praktor .
+docker compose up
+```
+
+### Optional extras
+
+| Extra | Adds | Install |
+|-------|------|---------|
+| `presidio` | ML-based PHI detection (names, addresses, MRN) | `uv pip install -e ".[presidio]"` |
+| `kafka` | KafkaAuditSink for high-throughput audit logs | `uv pip install -e ".[kafka]"` |
+| `minio` | MinIO/S3 audit sink with date partitioning | `uv pip install -e ".[minio]"` |
+| `otel` | OpenTelemetry trace export | `uv pip install -e ".[otel]"` |
+| `docs` | mkdocs + mkdocs-material for building docs | `uv pip install -e ".[docs]"` |
+| `dev` | pytest, pytest-asyncio, black | `uv pip install -e ".[dev]"` |
+
+Combine with commas: `uv pip install -e ".[dev,kafka,minio,presidio]"`
+
+---
+
+## Setup
+
+**1. Install Ollama** (for local LLM inference)
+
+```bash
+brew install ollama                                    # macOS
+curl -fsSL https://ollama.ai/install.sh | sh           # Linux
+ollama pull qwen2.5                                    # download a model
+ollama serve                                           # start the daemon (if not running)
+```
+
+Other models work too: `llama3.1`, `mistral`, `phi3`, anything Ollama supports. Set `PRAKTOR_MODEL` to switch.
 
 **2. Configure environment**
 
@@ -88,27 +149,112 @@ cp .env.example .env
 | `MD` | — | Directory for markdown output files |
 | `PDF` | — | Directory containing input PDF files |
 | `VECTOR_DB` | — | Path for the FAISS vector store |
+| `PRAKTOR_AUDIT_LOG` | `praktor_audit.jsonl` | Governance audit log path |
+| `PRAKTOR_RBAC_SECRET` | — | HMAC secret for RBAC tokens (opt-in) |
 
-**3. Start RabbitMQ**
+**3. Start RabbitMQ** (only needed for queue-based dispatch)
 
 ```bash
 docker run -d --name rabbitmq -p 5672:5672 rabbitmq:3
 ```
+
+Skip this step if you only use `DirectTransport` (in-process, see [30-second quickstart](#30-second-quickstart)).
+
+**4. Seed the vector store** (only needed for `job_interview` agent)
+
+```bash
+uv run python scripts/init_vector_db.py --pdf-dir /path/to/pdfs --db-path /path/to/vector_db
+```
+
 
 ---
 
 ## Running
 
 ```bash
-# Start the async consumer
-python -m praktor receive
+uv run python -m praktor receive
+```
 
 # Publish a task
 python -m praktor publish --agent cover_letter \
   --data '{"job_title":"VP Engineering","company":"Acme","job_description":"..."}'
 
-# List registered agents and their required fields
-python -m praktor list
+```bash
+# From JSON string
+uv run python -m praktor publish --agent thank_you \
+  --data '{"adjective":"professional","position":"VP Data Science","content":"Great conversation about GenAI strategy"}'
+
+# From stdin
+echo '{"agent_type":"search","search":"concept drift","content":"production ML systems"}' \
+  | uv run python -m praktor publish
+
+# Legacy producer methods (still work)
+uv run python -m praktor agent thankyou
+uv run python -m praktor agent search
+uv run python -m praktor agent message
+```
+
+**List registered agents and their required fields:**
+
+```bash
+uv run python -m praktor list
+```
+
+> **Tip:** if you've activated the venv with `source .venv/bin/activate`, you can drop the `uv run` prefix and just use `python -m praktor ...`.
+
+---
+
+## Running with Docker
+
+Docker bundles praktor with no Python install required. The image uses `uv` for fast, reproducible builds and runs as a non-root user.
+
+### Build
+
+```bash
+# Core image (~250 MB)
+docker build -t praktor .
+
+# With enterprise audit sinks
+docker build -t praktor --build-arg EXTRAS="kafka,minio" .
+
+# With ML-based PHI detection
+docker build -t praktor --build-arg EXTRAS="presidio" .
+```
+
+### Run standalone
+
+`--network host` lets the container reach Ollama on the host machine.
+
+```bash
+# Start consumer
+docker run --rm --network host praktor receive
+
+# Publish a task
+docker run --rm --network host praktor publish --agent thank_you \
+  --data '{"adjective":"warm","position":"CTO","content":"Great chat about AI governance"}'
+
+# List agents
+docker run --rm --network host praktor list
+```
+
+### Run with docker-compose (RabbitMQ + consumer + audit volume)
+
+```bash
+docker compose up                    # start RabbitMQ + consumer
+docker compose run --rm praktor publish --agent search \
+  --data '{"search":"HIPAA compliance","content":"healthcare AI"}'
+```
+
+`docker-compose.yml` provisions a named `praktor-audit` volume so audit logs survive container restarts.
+
+### Override config
+
+```bash
+docker run --rm --network host \
+  -e PRAKTOR_MODEL=llama3.1 \
+  -e PRAKTOR_CONCURRENCY=8 \
+  -v $(pwd)/audit:/app/audit \
+  praktor receive
 ```
 
 ---
