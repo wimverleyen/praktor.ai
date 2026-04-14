@@ -680,28 +680,15 @@ praktor.ai/
 │           └── closure_tracker.py  # Outcome tracking → PromptOptimizer feedback
 │
 ├── scripts/
-│   ├── demo_react.py            # Interactive ReAct loop demo (colour output)
-│   ├── demo_monitoring.py       # Live terminal dashboard + Prometheus
-│   ├── demo_judge_optimization.py  # Judge eval + prompt optimization pipeline
-│   ├── init_vector_db.py        # Seed FAISS store from PDF directory
-│   ├── init_member_brain.py     # Seed 5 synthetic demo members + HEDIS gaps
-│   └── demo_hedis_agent.py      # HEDIS gap closure demo (--dry-run supported)
-│
-├── tests/                       # pytest — all mocked, no live services needed
-│   ├── test_observability.py    # 17 tests: Span, TrajectoryEvent, LLMCallSpan
-│   ├── test_react.py            # 8 tests: ReAct loop + observability
-│   ├── test_prompt_versioning.py # 27 tests: registry, judge, optimizer
-│   ├── test_monitoring.py       # 47 tests: cost, store, registry, Grafana
-│   ├── test_clinical_privacy.py # 23 tests: PHI gate, deidentifier, member hashing (IRON RULE)
-│   └── test_hedis_agent.py      # 17 tests: parser, definition, escalation guardrails
-│
-├── praktor/ui/
-│   ├── app.py                   # Streamlit demo UI (3 tabs: Span Tracer, Skills, Docs)
-│   └── clinical_app.py          # Clinical HITL review queue (care manager UI)
-│
-├── praktor-dashboard.json       # Grafana dashboard (import-ready)
-├── .env.example
-└── requirements.txt
+│   └── init_vector_db.py        # Seed FAISS store from a PDF directory
+├── tests/                       # pytest, all mocked (no live LLM needed)
+├── docs/                        # mkdocs site + compliance guides
+├── .github/workflows/           # CI/CD: test, benchmark, release
+├── Dockerfile                   # Multi-stage build with uv
+├── docker-compose.yml           # RabbitMQ + consumer stack
+├── Makefile                     # Dev task runner (test, lint, docs, docker)
+├── pyproject.toml               # Hatchling build + optional extras
+└── .env.example
 ```
 
 ---
@@ -733,17 +720,26 @@ The UI reads from `~/.praktor/monitoring.db` — start the consumer and publish 
 ## Tests
 
 ```bash
-pytest tests/
-# 99 core tests + 23 PHI gate tests + 17 HEDIS agent tests
-
-# PHI gate tests — IRON RULE: must pass before FAISS write path ships
-PYTHONPATH=praktor pytest tests/test_clinical_privacy.py -v
-
-# HEDIS agent tests
-PYTHONPATH=praktor pytest tests/test_hedis_agent.py -v
+make test                           # runs pytest via uv
+# or: uv run pytest tests/ -x -v
 ```
 
 All tests mock the LLM and filesystem. No live Ollama, RabbitMQ, or FAISS needed.
+
+### Dev commands (Makefile)
+
+```bash
+make help            # show all targets
+make install-dev     # install with dev deps via uv
+make test            # run full test suite
+make lint            # black format check
+make benchmark       # governance overhead benchmarks
+make docs            # build mkdocs site
+make serve-docs      # preview docs at localhost:8000
+make docker          # build Docker image
+make docker-up       # start RabbitMQ + consumer stack
+make clean           # remove build artifacts
+```
 
 ---
 
