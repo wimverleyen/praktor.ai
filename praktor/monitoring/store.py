@@ -1,0 +1,438 @@
+"""
+SQLite-backed persistent store for agent monitoring data.
+
+Schema:
+    agent_runs       — one row per completed agent.run()
+    trajectory_steps — per-step breakdown (LLM calls, tool calls)
+    judge_evals      — LLM-as-judge evaluation results
+    kpi_events       — custom business KPI measurements
+
+All writes are async-safe via asyncio.to_thread().
+Reads return plain dicts for zero-dependency portability.
+
+Usage:
+    store = MonitoringStore()
+    await store.insert_run(run_record)
+    rows = await store.query_runs(agent="cover_letter", hours=24)
+    summary = await store.aggregate(agent="cover_letter")
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import os
+import sqlite3
+import time
+from dataclasses import dataclass, asdict
+from pathlib import Path
+from typing import Any
+
+from settings import create_log
+
+log = create_log()
+
+_DEFAULT_DB = os.getenv(
+    "PRAKTOR_MONITORING_DB",
+    str(Path.home() / ".praktor" / "monitoring.db"),
+)
+
+_SCHEMA = """
+PRAGMA journal_mode=WAL;
+PRAGMA foreign_keys=ON;
+
+CREATE TABLE IF NOT EXISTS agent_runs (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id      TEXT    NOT NULL,
+    agent_type      TEXT    NOT NULL,
+    model           TEXT    NOT NULL,
+    timestamp       REAL    NOT NULL,
+    duration_ms     REAL    DEFAULT 0,
+    input_tokens    INTEGER DEFAULT 0,
+    output_tokens   INTEGER DEFAULT 0,
+    total_tokens    INTEGER DEFAULT 0,
+    cost_usd        REAL    DEFAULT 0.0,
+    passes          INTEGER DEFAULT 1,
+    cached          INTEGER DEFAULT 0,
+    error           TEXT,
+    status          TEXT    DEFAULT 'ok',
+    prompt_version  TEXT
+);
+
+CREATE TABLE IF NOT EXISTS trajectory_steps (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id      INTEGER NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
+    step        INTEGER,
+    kind        TEXT,
+    tool_name   TEXT,
+    latency_ms  REAL    DEFAULT 0,
+    input_tokens  INTEGER DEFAULT 0,
+    output_tokens INTEGER DEFAULT 0,
+    cached      INTEGER DEFAULT 0,
+    error       TEXT
+);
+
+CREATE TABLE IF NOT EXISTS judge_evals (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id      TEXT    NOT NULL,
+    agent_type      TEXT    NOT NULL,
+    version_id      TEXT,
+    score           REAL    NOT NULL,
+    relevance       REAL,
+    accuracy        REAL,
+    completeness    REAL,
+    conciseness     REAL,
+    reasoning       TEXT,
+    question        TEXT,
+    timestamp       REAL    NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS kpi_events (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT    NOT NULL,
+    value       REAL    NOT NULL,
+    tags        TEXT,
+    timestamp   REAL    NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_runs_agent     ON agent_runs(agent_type);
+CREATE INDEX IF NOT EXISTS idx_runs_ts        ON agent_runs(timestamp);
+CREATE INDEX IF NOT EXISTS idx_runs_session   ON agent_runs(session_id);
+CREATE INDEX IF NOT EXISTS idx_judge_agent    ON judge_evals(agent_type);
+CREATE INDEX IF NOT EXISTS idx_kpi_name       ON kpi_events(name);
+"""
+
+
+# ---------------------------------------------------------------------------
+# Data containers
+# ---------------------------------------------------------------------------
+
+@dataclass
+class RunRecord:
+    """Normalized record from one completed agent.run()."""
+    session_id: str
+    agent_type: str
+    model: str
+    timestamp: float           # Unix epoch (UTC)
+    duration_ms: float
+    input_tokens: int
+    output_tokens: int
+    total_tokens: int
+    cost_usd: float
+    passes: int
+    cached: bool
+    error: str | None
+    status: str                # "ok" | "error"
+    prompt_version: str | None = None
+    trajectory: list[dict] | None = None   # not persisted to agent_runs table
+
+
+@dataclass
+class JudgeEvalRecord:
+    """One LLM-as-judge evaluation result."""
+    session_id: str
+    agent_type: str
+    score: float
+    timestamp: float
+    version_id: str | None = None
+    relevance: float | None = None
+    accuracy: float | None = None
+    completeness: float | None = None
+    conciseness: float | None = None
+    reasoning: str = ""
+    question: str = ""
+
+
+@dataclass
+class KPIRecord:
+    """One business KPI measurement."""
+    name: str
+    value: float
+    timestamp: float
+    tags: dict[str, str] | None = None
+
+
+# ---------------------------------------------------------------------------
+# Store
+# ---------------------------------------------------------------------------
+
+class MonitoringStore:
+    """
+    SQLite-backed persistent store.
+
+    Thread/async safe: all writes go through asyncio.to_thread() so they
+    never block the event loop.
+    """
+
+    def __init__(self, db_path: str | None = None) -> None:
+        self._db_path = db_path or _DEFAULT_DB
+        Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
+        self._init_schema()
+
+    # ------------------------------------------------------------------
+    # Schema
+    # ------------------------------------------------------------------
+
+    def _init_schema(self) -> None:
+        with self._connect() as conn:
+            conn.executescript(_SCHEMA)
+
+    def _connect(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self._db_path, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    # ------------------------------------------------------------------
+    # Write
+    # ------------------------------------------------------------------
+
+    async def insert_run(self, record: RunRecord) -> int:
+        """Insert a run record and its trajectory steps. Returns the run id."""
+        return await asyncio.to_thread(self._insert_run_sync, record)
+
+    def _insert_run_sync(self, record: RunRecord) -> int:
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """INSERT INTO agent_runs
+                   (session_id, agent_type, model, timestamp, duration_ms,
+                    input_tokens, output_tokens, total_tokens, cost_usd,
+                    passes, cached, error, status, prompt_version)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    record.session_id, record.agent_type, record.model,
+                    record.timestamp, record.duration_ms,
+                    record.input_tokens, record.output_tokens, record.total_tokens,
+                    record.cost_usd, record.passes,
+                    int(record.cached), record.error,
+                    record.status, record.prompt_version,
+                ),
+            )
+            run_id = cursor.lastrowid
+
+            if record.trajectory:
+                conn.executemany(
+                    """INSERT INTO trajectory_steps
+                       (run_id, step, kind, tool_name, latency_ms,
+                        input_tokens, output_tokens, cached, error)
+                       VALUES (?,?,?,?,?,?,?,?,?)""",
+                    [
+                        (
+                            run_id, step["step"], step["kind"],
+                            step.get("tool_name"), step.get("latency_ms", 0),
+                            step.get("input_tokens", 0), step.get("output_tokens", 0),
+                            int(step.get("cached", False)), step.get("error"),
+                        )
+                        for step in record.trajectory
+                    ],
+                )
+            return run_id
+
+    async def insert_judge_eval(self, record: JudgeEvalRecord) -> None:
+        await asyncio.to_thread(self._insert_judge_sync, record)
+
+    def _insert_judge_sync(self, record: JudgeEvalRecord) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """INSERT INTO judge_evals
+                   (session_id, agent_type, version_id, score,
+                    relevance, accuracy, completeness, conciseness,
+                    reasoning, question, timestamp)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    record.session_id, record.agent_type, record.version_id,
+                    record.score, record.relevance, record.accuracy,
+                    record.completeness, record.conciseness,
+                    record.reasoning, record.question, record.timestamp,
+                ),
+            )
+
+    async def insert_kpi(self, record: KPIRecord) -> None:
+        await asyncio.to_thread(self._insert_kpi_sync, record)
+
+    def _insert_kpi_sync(self, record: KPIRecord) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """INSERT INTO kpi_events (name, value, tags, timestamp)
+                   VALUES (?,?,?,?)""",
+                (
+                    record.name, record.value,
+                    json.dumps(record.tags) if record.tags else None,
+                    record.timestamp,
+                ),
+            )
+
+    # ------------------------------------------------------------------
+    # Read
+    # ------------------------------------------------------------------
+
+    async def query_runs(
+        self,
+        agent: str | None = None,
+        model: str | None = None,
+        hours: float = 24,
+        status: str | None = None,
+        limit: int = 1000,
+    ) -> list[dict]:
+        return await asyncio.to_thread(
+            self._query_runs_sync, agent, model, hours, status, limit
+        )
+
+    def _query_runs_sync(
+        self,
+        agent: str | None,
+        model: str | None,
+        hours: float,
+        status: str | None,
+        limit: int,
+    ) -> list[dict]:
+        since = time.time() - hours * 3600
+        clauses = ["timestamp >= ?"]
+        params: list[Any] = [since]
+
+        if agent:
+            clauses.append("agent_type = ?")
+            params.append(agent)
+        if model:
+            clauses.append("model = ?")
+            params.append(model)
+        if status:
+            clauses.append("status = ?")
+            params.append(status)
+
+        where = " AND ".join(clauses)
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"SELECT * FROM agent_runs WHERE {where} ORDER BY timestamp DESC LIMIT ?",
+                params + [limit],
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    async def aggregate(
+        self,
+        agent: str | None = None,
+        hours: float = 24,
+    ) -> dict[str, Any]:
+        """
+        Return a summary dict for dashboard / CLI display.
+
+        Keys:
+            total_runs, ok_runs, error_runs, error_rate
+            total_tokens, total_cost_usd
+            avg_duration_ms, p95_duration_ms
+            cache_hit_rate
+            avg_judge_score, judge_eval_count
+            by_agent: {name: {runs, tokens, cost, avg_latency}}
+            by_model: {name: {runs, tokens, cost}}
+        """
+        return await asyncio.to_thread(self._aggregate_sync, agent, hours)
+
+    def _aggregate_sync(self, agent: str | None, hours: float) -> dict[str, Any]:
+        since = time.time() - hours * 3600
+        params_filter: list[Any] = [since]
+        agent_clause = ""
+        if agent:
+            agent_clause = "AND agent_type = ?"
+            params_filter.append(agent)
+
+        with self._connect() as conn:
+            runs = conn.execute(
+                f"SELECT * FROM agent_runs WHERE timestamp >= ? {agent_clause}",
+                params_filter,
+            ).fetchall()
+
+            judge_rows = conn.execute(
+                f"SELECT score FROM judge_evals WHERE timestamp >= ? {agent_clause}",
+                params_filter,
+            ).fetchall()
+
+        if not runs:
+            return {
+                "total_runs": 0, "ok_runs": 0, "error_runs": 0, "error_rate": 0.0,
+                "total_tokens": 0, "total_cost_usd": 0.0,
+                "avg_duration_ms": 0.0, "p95_duration_ms": 0.0,
+                "cache_hit_rate": 0.0,
+                "avg_judge_score": None, "judge_eval_count": 0,
+                "by_agent": {}, "by_model": {},
+            }
+
+        durations = sorted(r["duration_ms"] for r in runs)
+        n = len(durations)
+        p95_idx = max(0, int(n * 0.95) - 1)
+        total_tokens = sum(r["total_tokens"] for r in runs)
+        total_cost = sum(r["cost_usd"] for r in runs)
+        ok_runs = sum(1 for r in runs if r["status"] == "ok")
+        error_runs = n - ok_runs
+        cached = sum(1 for r in runs if r["cached"])
+
+        judge_scores = [r["score"] for r in judge_rows]
+
+        # By-agent breakdown
+        by_agent: dict[str, dict] = {}
+        by_model: dict[str, dict] = {}
+        for r in runs:
+            a = r["agent_type"]
+            m = r["model"]
+            for bucket, key in ((by_agent, a), (by_model, m)):
+                if key not in bucket:
+                    bucket[key] = {"runs": 0, "tokens": 0, "cost": 0.0, "latency_sum": 0.0}
+                bucket[key]["runs"] += 1
+                bucket[key]["tokens"] += r["total_tokens"]
+                bucket[key]["cost"] += r["cost_usd"]
+                bucket[key]["latency_sum"] += r["duration_ms"]
+
+        for bucket in (by_agent, by_model):
+            for key in bucket:
+                runs_count = bucket[key]["runs"]
+                bucket[key]["avg_latency"] = round(
+                    bucket[key].pop("latency_sum") / runs_count, 1
+                )
+
+        return {
+            "total_runs":       n,
+            "ok_runs":          ok_runs,
+            "error_runs":       error_runs,
+            "error_rate":       round(error_runs / n, 4) if n else 0.0,
+            "total_tokens":     total_tokens,
+            "total_cost_usd":   round(total_cost, 6),
+            "avg_duration_ms":  round(sum(durations) / n, 1),
+            "p95_duration_ms":  round(durations[p95_idx], 1),
+            "cache_hit_rate":   round(cached / n, 4) if n else 0.0,
+            "avg_judge_score":  round(sum(judge_scores) / len(judge_scores), 2) if judge_scores else None,
+            "judge_eval_count": len(judge_scores),
+            "by_agent":         by_agent,
+            "by_model":         by_model,
+        }
+
+    async def query_kpis(
+        self,
+        name: str | None = None,
+        hours: float = 24,
+        limit: int = 500,
+    ) -> list[dict]:
+        return await asyncio.to_thread(self._query_kpis_sync, name, hours, limit)
+
+    def _query_kpis_sync(
+        self, name: str | None, hours: float, limit: int
+    ) -> list[dict]:
+        since = time.time() - hours * 3600
+        clauses = ["timestamp >= ?"]
+        params: list[Any] = [since]
+        if name:
+            clauses.append("name = ?")
+            params.append(name)
+        where = " AND ".join(clauses)
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"SELECT * FROM kpi_events WHERE {where} ORDER BY timestamp DESC LIMIT ?",
+                params + [limit],
+            ).fetchall()
+        result = []
+        for r in rows:
+            d = dict(r)
+            if d.get("tags"):
+                try:
+                    d["tags"] = json.loads(d["tags"])
+                except Exception:
+                    pass
+            result.append(d)
+        return result

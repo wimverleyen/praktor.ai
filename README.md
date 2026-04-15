@@ -1,6 +1,6 @@
 # praktor.ai
 
-General-purpose agentic framework built on LangChain, RabbitMQ, and local or hosted LLMs. Comes with built-in agents for job application workflows — resume tailoring, cover letter generation, interview prep, and professional communications — but the framework is generic. Any agent is one file.
+General-purpose agentic framework built on LangChain, RabbitMQ, and local or hosted LLMs. Ships with a **ReAct tool-use loop**, **OpenTelemetry observability**, **automated prompt optimization**, and a **continuous monitoring stack** (Prometheus, Grafana, SQLite). Comes with built-in agents for job-application workflows — but any agent is one file.
 
 → [Architecture deep-dive](ARCHITECTURE.md) · [Contributing guide](CONTRIBUTING.md)
 
@@ -12,13 +12,13 @@ General-purpose agentic framework built on LangChain, RabbitMQ, and local or hos
 Producer (transport/producer.py)
   → RabbitMQ queue "agentic"
   → Async consumer (transport/consumer.py)
-  → Router (core/router.py)  ← dynamic dispatch by agent_type
-  → Agent.run()              ← async generator, yields token chunks
-  → LLM (streaming)
-  → Memory + File output
+  → Router (core/router.py)          ← dynamic dispatch by agent_type
+  → Agent.run()                       ← async generator, yields token chunks
+      ├─ Single-pass path             ← one LLM call + optional improvement passes
+      └─ ReAct loop (max_steps > 1)   ← Thought → Action → Observation → repeat
+  → Memory (None | buffer | FAISS)
+  → Monitoring (metrics + SQLite + OTel spans)
 ```
-
-The consumer runs `PRAKTOR_CONCURRENCY` (default: 4) agents concurrently. Each agent streams tokens as they arrive — no waiting for the full response.
 
 ---
 
@@ -43,6 +43,9 @@ cp .env.example .env
 | `PRAKTOR_CONCURRENCY` | `4` | Max concurrent agents |
 | `CACHE_DIR` | `/tmp/praktor_cache` | Prompt-response cache directory |
 | `CACHE_TTL` | `3600` | Cache TTL in seconds |
+| `OLLAMA_HOST` | `http://localhost:11434` | Ollama base URL |
+| `OTLP_ENDPOINT` | — | OTLP gRPC collector (Jaeger, Grafana Alloy). Unset → stdout |
+| `PRAKTOR_MONITORING_DB` | `~/.praktor/monitoring.db` | SQLite monitoring store |
 | `ANTHROPIC_API_KEY` | — | Required for `claude-*` models |
 | `OPENAI_API_KEY` | — | Required for `gpt-*` models |
 | `MD` | — | Directory for markdown output files |
@@ -55,42 +58,217 @@ cp .env.example .env
 docker run -d --name rabbitmq -p 5672:5672 rabbitmq:3
 ```
 
-**4. Seed the vector store** (only needed for `job_interview` agent)
-
-```bash
-python scripts/init_vector_db.py --pdf-dir /path/to/pdfs --db-path /path/to/vector_db
-```
-
 ---
 
 ## Running
 
-**Start the async consumer:**
-
 ```bash
+# Start the async consumer
 python -m praktor receive
-```
 
-**Publish a task:**
+# Publish a task
+python -m praktor publish --agent cover_letter \
+  --data '{"job_title":"VP Engineering","company":"Acme","job_description":"..."}'
 
-```bash
-# From JSON string
-python -m praktor publish --agent thank_you --data '{"adjective":"professional","position":"VP Data Science","content":"Great conversation about GenAI strategy"}'
-
-# From stdin
-echo '{"agent_type":"search","search":"concept drift","content":"production ML systems"}' | python -m praktor publish
-
-# Legacy producer methods (still work)
-python -m praktor agent thankyou
-python -m praktor agent search
-python -m praktor agent message
-```
-
-**List registered agents and their required fields:**
-
-```bash
+# List registered agents and their required fields
 python -m praktor list
 ```
+
+---
+
+## ReAct agent (tool-use loop)
+
+Set `max_steps > 1` and list tools — the agent automatically enters a Thought → Action → Observation loop.
+
+```python
+from pydantic import BaseModel
+from core.agent_definition import AgentDefinition, MemoryPolicy
+from core.agent import Agent
+import tools.web_search  # registers at import time
+
+class ResearchInput(BaseModel):
+    agent_type: str = "researcher"
+    question: str
+    session_id: str = ""
+    history: str = ""
+
+definition = AgentDefinition(
+    name="researcher",
+    prompt_template="Answer this question: {question}\n\nHistory: {history}",
+    input_schema=ResearchInput,
+    llm_model="llama3:8b",
+    tools=["web_search"],
+    max_steps=4,                         # enables ReAct loop
+    memory_policy=MemoryPolicy.NONE,
+)
+agent = Agent(definition)
+
+async for chunk in agent.run({"question": "What are the latest OTel features for LLMs?"}, session_id="s1"):
+    print(chunk, end="", flush=True)
+```
+
+**Run the interactive ReAct demo:**
+
+```bash
+PYTHONPATH=praktor python scripts/demo_react.py \
+  --question "Compare FAISS vs Chroma for vector search" \
+  --model llama3:8b
+```
+
+---
+
+## Prompt versioning
+
+Every prompt version is content-addressed (SHA-256), stored in `~/.praktor/prompts/`, and queryable by prefix.
+
+```python
+from core.prompt_registry import PromptRegistry
+
+registry = PromptRegistry()
+v1 = registry.save("cover_letter", template="You are a writer...", notes="baseline", set_active=True)
+print(registry.diff("cover_letter", v1_id, v2_id))   # unified diff
+```
+
+**CLI:**
+
+```bash
+python -m praktor prompt list cover_letter
+python -m praktor prompt diff cover_letter abc123 def456
+python -m praktor prompt activate cover_letter def456
+```
+
+---
+
+## LLM-as-judge evaluation
+
+Score any agent response on four criteria (0–10 each): relevance, accuracy, completeness, conciseness.
+
+```python
+from core.judge import JudgeEvaluator
+
+judge = JudgeEvaluator(model="llama3:8b")
+score = await judge.evaluate(
+    question="What is RAG?",
+    response=agent_response,
+    expected=reference_answer,   # optional
+)
+print(score.summary())
+# → overall=7.80/10  rel=8.0  acc=8.0  cmp=7.0  con=8.0  | Good structured answer.
+
+# Head-to-head comparison
+cmp = await judge.compare(question, response_a, response_b)
+print(cmp["winner"], cmp["reasoning"])
+```
+
+Scores are recorded back to `PromptRegistry.record_eval()` and the monitoring SQLite store.
+
+---
+
+## Automated prompt optimization
+
+Two modes, one interface. Picks the best available backend automatically.
+
+```python
+from core.prompt_optimizer import PromptOptimizer
+
+optimizer = PromptOptimizer(agent_name="researcher", model="llama3:8b")
+
+# Build examples from past runs
+examples = [{"input": {"question": "What is RAG?"}, "output": agent_response}]
+
+result = await optimizer.optimize(
+    examples,
+    goal="Improve completeness and technical depth for ML practitioners.",
+)
+print(result.summary())
+# → [native] 7.22 → 8.42 ↑  version=813efcd6  native-opt: Improve completeness...
+```
+
+| Mode | When | How |
+|------|------|-----|
+| **Native** | Always available | Meta-LLM rewrites the prompt using examples + judge scores (COPRO-style) |
+| **DSPy** | `dspy-ai` installed | `BootstrapFewShot` compiles few-shot examples into the prompt |
+
+**Run the full judge + optimization demo:**
+
+```bash
+# Dry run (no Ollama needed)
+PYTHONPATH=praktor python scripts/demo_judge_optimization.py --dry-run
+
+# Real Ollama
+PYTHONPATH=praktor python scripts/demo_judge_optimization.py --model llama3:8b
+```
+
+The demo runs 8 steps: register v1 → judge 5 questions → identify weakest criterion → optimize → diff → re-evaluate → before/after comparison.
+
+---
+
+## Continuous monitoring
+
+Every `Agent.run()` is automatically recorded — no code changes required.
+
+```python
+# Optional: start Prometheus scrape server at startup
+from monitoring import configure, record_kpi
+configure(prometheus_port=8080)
+
+# Record business KPIs anywhere
+record_kpi("cover_letter_accepted", 1.0, tags={"source": "linkedin"})
+record_kpi("search_quality", 8.5, tags={"agent": "researcher"})
+```
+
+**Data products:**
+
+| Product | How to access |
+|---------|--------------|
+| SQLite store | `~/.praktor/monitoring.db` — always written |
+| CLI summary | `python -m praktor monitor summary [--agent X] [--hours 24]` |
+| Prometheus | `python -m praktor monitor serve --port 8080` → `http://localhost:8080/metrics` |
+| Grafana JSON | `python -m praktor monitor export grafana > dashboard.json` then import |
+| KPI log | `python -m praktor monitor kpi --name cover_letter_accepted` |
+
+**Metrics collected per run:**
+
+- Cost (USD) from token pricing table (35+ models; local = $0.00)
+- Input/output tokens, total tokens
+- Duration (P50/P95/P99 histograms)
+- Tool call counts and error rates
+- Cache hit ratio
+- LLM judge scores (if evaluated)
+- Custom business KPIs
+
+**Run the live monitoring demo:**
+
+```bash
+# Dry run — instant, no Ollama
+PYTHONPATH=praktor python scripts/demo_monitoring.py --dry-run --no-judge
+
+# Real Ollama — 12 agent tasks with live terminal dashboard
+PYTHONPATH=praktor python scripts/demo_monitoring.py --model llama3:8b
+```
+
+**Grafana dashboard (21 panels, auto-generated):**
+
+```bash
+python -m praktor monitor export grafana > praktor-dashboard.json
+# Grafana → Dashboards → Import → Upload JSON
+```
+
+Panels cover: run rate, token throughput, cost by model, latency percentiles, error rate, judge score distribution, cache efficiency, tool call breakdown, and business KPIs — all with `agent` and `model` template variables.
+
+---
+
+## Observability (OpenTelemetry)
+
+Every agent run emits OTel traces with child spans per LLM call and tool call. Set `OTLP_ENDPOINT` to export to any collector; unset → stdout for local dev.
+
+```
+SPAN {"agent_type": "cover_letter", "session_id": "a3f1b2c4", "model": "qwen2.5",
+      "duration_ms": 4821.3, "token_count": 312, "passes": 3, "cached": false,
+      "trajectory_steps": 3}
+```
+
+Child span attributes: `llm.pass`, `llm.kind`, `llm.output_tokens`, `llm.latency_ms`, `llm.cached`, `tool.name`.
 
 ---
 
@@ -98,7 +276,7 @@ python -m praktor list
 
 | Agent type | What it does | Memory | Passes |
 |------------|-------------|--------|--------|
-| `job_application` | Resume tailored to a job description with impact metrics | None | 1 |
+| `job_application` | Resume tailored to a job description | None | 1 |
 | `cover_letter` | Cover letter with two rounds of automated improvement | None | 3 |
 | `keywords_extraction` | Keyword gap analysis across resume and job description | None | 1 |
 | `job_interview` | Interview prep using your FAISS document store | Long-term (FAISS) | 1 |
@@ -126,39 +304,33 @@ MyAgentDefinition = AgentDefinition(
     name="my_agent",
     prompt_template="You are an expert. Answer this: {topic}",
     input_schema=MyInput,
-    llm_model="qwen2.5",           # or "claude-sonnet-4-6", "gpt-3.5-turbo"
+    llm_model="qwen2.5",           # or "claude-sonnet-4-6", "gpt-4o"
     memory_policy=MemoryPolicy.SHORT_TERM,
+    tools=["web_search"],          # add tools to enable ReAct loop
+    max_steps=3,                   # > 1 enables ReAct
     output_sink=OutputSink.BOTH,
     output_file="my_agent_output",
 )
 ```
 
-Then register it in `praktor/agents/__init__.py`:
+Register it in `praktor/agents/__init__.py`:
 
 ```python
 from agents.my_agent import MyAgentDefinition
 _router.register(MyAgentDefinition)
 ```
 
-That's it. The consumer picks it up automatically on next start.
-
 ---
 
 ## Supported LLMs
 
-| Provider | Model string | Notes |
-|----------|-------------|-------|
-| Ollama (default) | `qwen2.5`, `llama3.1`, any Ollama model | Runs locally, no API key |
-| Anthropic Claude | any `claude-*` string | Requires `ANTHROPIC_API_KEY` |
-| OpenAI | `gpt-3.5-turbo-instruct`, `gpt-3.5-turbo` | Requires `OPENAI_API_KEY` |
+| Provider | Model string examples | Notes |
+|----------|-----------------------|-------|
+| Ollama | `qwen2.5`, `llama3:8b`, `mistral` | Local, no API key, zero cost |
+| Anthropic | `claude-sonnet-4-6`, `claude-opus-4` | Requires `ANTHROPIC_API_KEY` |
+| OpenAI | `gpt-4o`, `gpt-4o-mini`, `o3-mini` | Requires `OPENAI_API_KEY` |
 
 Switch model per-agent via `AgentDefinition.llm_model`, or globally via `PRAKTOR_MODEL`.
-
-```python
-from LLM.llm_factory import LLMFactory
-
-llm = LLMFactory().create_llm("claude-sonnet-4-6")
-```
 
 ---
 
@@ -167,49 +339,50 @@ llm = LLMFactory().create_llm("claude-sonnet-4-6")
 ```
 praktor.ai/
 ├── praktor/
-│   ├── __main__.py              # CLI: receive | publish | list | agent
+│   ├── __main__.py              # CLI: receive | publish | list | monitor | prompt
 │   ├── settings.py              # Config, rotating logs, env vars
-│   ├── utils.py                 # read_markdown / save_markdown
 │   │
 │   ├── core/                    # Framework abstractions
 │   │   ├── agent_definition.py  # AgentDefinition dataclass
-│   │   ├── agent.py             # Agent: async generator run()
+│   │   ├── agent.py             # Agent: run() → single-pass or ReAct loop
 │   │   ├── router.py            # Dynamic dispatch + global singleton
 │   │   ├── memory.py            # Memory protocol + NullMemory
 │   │   ├── tool.py              # Tool protocol + ToolRegistry
-│   │   └── observability.py     # Span: latency + token + cache logging
+│   │   ├── observability.py     # OTel spans + TrajectoryEvent per LLM/tool call
+│   │   ├── prompt_registry.py   # JSONL version store (content-addressed)
+│   │   ├── judge.py             # LLM-as-judge: 4-criterion scoring + comparison
+│   │   └── prompt_optimizer.py  # Native COPRO-style + optional DSPy optimizer
+│   │
+│   ├── monitoring/              # Continuous monitoring data products
+│   │   ├── __init__.py          # configure(), record_kpi(), record_run()
+│   │   ├── cost.py              # Token pricing table (35+ models)
+│   │   ├── store.py             # SQLite persistent store
+│   │   ├── registry.py          # In-memory counters, histograms, gauges
+│   │   ├── collector.py         # Span → RunRecord bridge
+│   │   └── exporters/
+│   │       ├── prometheus.py    # Prometheus HTTP scrape server
+│   │       ├── otel.py          # OTel metrics via OTLP_ENDPOINT
+│   │       └── grafana.py       # 21-panel Grafana dashboard JSON builder
 │   │
 │   ├── agents/                  # Built-in agent definitions (one file each)
-│   │   ├── __init__.py          # Auto-registers all agents
-│   │   ├── job_application.py
-│   │   ├── cover_letter.py      # 3-pass improvement
-│   │   ├── keywords_extraction.py
-│   │   ├── job_interview.py     # Uses FAISS long-term memory
-│   │   ├── thank_you.py
-│   │   ├── search.py
-│   │   └── message.py
-│   │
-│   ├── memory/
-│   │   ├── buffer.py            # InMemoryBuffer (short-term, session-keyed)
-│   │   └── vector.py            # FAISSMemory (long-term semantic retrieval)
-│   │
-│   ├── tools/
-│   │   ├── web_search.py        # DuckDuckGo (no API key needed)
-│   │   └── file_io.py           # ReadFileTool + WriteFileTool
-│   │
-│   ├── transport/
-│   │   ├── consumer.py          # aio-pika async consumer
-│   │   ├── producer.py          # publish() + publish_many()
-│   │   └── schemas.py           # Dynamic schema registry
-│   │
-│   └── LLM/                     # LangChain wrappers (kept for legacy compat)
-│       ├── llm_factory.py       # Creates LLM instances by model string
-│       ├── llm_interface.py     # AsyncLLMAdapter (streaming + retry + cache)
-│       └── prompt.py            # Legacy prompt templates
+│   ├── memory/                  # InMemoryBuffer + FAISSMemory
+│   ├── tools/                   # web_search (DuckDuckGo), file_io
+│   ├── transport/               # aio-pika consumer + producer
+│   └── LLM/                     # AsyncLLMAdapter (streaming + retry + cache)
 │
 ├── scripts/
-│   └── init_vector_db.py        # Seed FAISS store from a PDF directory
-├── tests/                       # pytest, all mocked (no live LLM needed)
+│   ├── demo_react.py            # Interactive ReAct loop demo (colour output)
+│   ├── demo_monitoring.py       # Live terminal dashboard + Prometheus
+│   ├── demo_judge_optimization.py  # Judge eval + prompt optimization pipeline
+│   └── init_vector_db.py        # Seed FAISS store from PDF directory
+│
+├── tests/                       # pytest — all mocked, no live services needed
+│   ├── test_observability.py    # 17 tests: Span, TrajectoryEvent, LLMCallSpan
+│   ├── test_react.py            # 8 tests: ReAct loop + observability
+│   ├── test_prompt_versioning.py # 27 tests: registry, judge, optimizer
+│   └── test_monitoring.py       # 47 tests: cost, store, registry, Grafana
+│
+├── praktor-dashboard.json       # Grafana dashboard (import-ready)
 ├── .env.example
 └── requirements.txt
 ```
@@ -220,26 +393,31 @@ praktor.ai/
 
 ```bash
 pytest tests/
+# 99 tests across observability, ReAct, prompt versioning, and monitoring
 ```
 
 All tests mock the LLM and filesystem. No live Ollama, RabbitMQ, or FAISS needed.
 
 ---
 
-## Observability
+## CLI reference
 
-Every agent run emits a structured log line to `praktor.ai.log`:
+```bash
+# Agent runtime
+python -m praktor receive                    # start async consumer
+python -m praktor publish --agent X --data '{}' # publish a task
+python -m praktor list                       # list registered agents
 
-```
-SPAN {"agent_type": "cover_letter", "session_id": "a3f1b2c4", "model": "qwen2.5",
-      "duration_ms": 4821.3, "token_count": 312, "passes": 3, "cached": false}
-```
+# Monitoring
+python -m praktor monitor summary            # print last-24h summary
+python -m praktor monitor serve --port 8080  # start Prometheus endpoint
+python -m praktor monitor export grafana     # print Grafana dashboard JSON
+python -m praktor monitor kpi --name X       # list KPI events
 
-The log rotates at 10 MB (5 backups). To correlate a request end-to-end:
-
-```python
-from settings import create_log, new_request_id
-
-request_id = new_request_id()
-log = create_log(request_id)
+# Prompt management
+python -m praktor prompt list <agent>        # list versions
+python -m praktor prompt diff <agent> v1 v2  # unified diff
+python -m praktor prompt activate <agent> <version_id>
+python -m praktor prompt eval <agent> <version_id> -q "..." -r "..."
+python -m praktor prompt optimize <agent> -x examples.json --goal "..."
 ```

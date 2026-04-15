@@ -1,11 +1,10 @@
 import asyncio
 import hashlib
 import diskcache
-from typing import AsyncGenerator
-from abc import ABC, abstractmethod
-from typing import List, Dict
+from contextlib import contextmanager
+from typing import AsyncGenerator, Any
 
-from langchain.prompts import PromptTemplate
+from langchain_core.prompts import PromptTemplate
 
 from settings import MODEL, CACHE_DIR, CACHE_TTL, create_log
 from LLM.llm_factory import LLMFactory
@@ -105,13 +104,21 @@ class AsyncLLMAdapter:
             prompt_text = str(data)
         return hashlib.sha256(f"{self._model}:{prompt_text}".encode()).hexdigest()
 
-    async def ainvoke(self, data: dict) -> str:
-        """Single blocking call with retry. Returns full response string."""
+    async def ainvoke(self, data: dict, call_span: Any = None) -> str:
+        """
+        Single blocking call with retry. Returns full response string.
+
+        call_span: optional LLMCallSpan context manager from core.observability.
+                   If provided, latency and cache status are recorded on it.
+        """
         if self._use_cache:
             key = self._cache_key(data)
             cached = _cache.get(key)
             if cached is not None:
                 log.debug(f"Cache hit [{self._model}]")
+                if call_span is not None:
+                    call_span.cached = True
+                    call_span.output_tokens = len(cached.split())
                 return cached
 
         result = await _invoke_with_retry(self._chain, data)
@@ -119,21 +126,30 @@ class AsyncLLMAdapter:
         if self._use_cache:
             _cache.set(key, result, expire=CACHE_TTL)
 
+        if call_span is not None:
+            call_span.output_tokens = len(result.split())
+
         return result
 
-    async def astream(self, data: dict) -> AsyncGenerator[str, None]:
+    async def astream(self, data: dict, call_span: Any = None) -> AsyncGenerator[str, None]:
         """
         Yield token chunks as they arrive from the LLM.
 
         Cache hit: yields the full cached response as a single chunk.
         Cache miss: streams natively via LCEL astream(); falls back to
                     thread-pool invoke if the LLM doesn't support streaming.
+
+        call_span: optional LLMCallSpan context manager from core.observability.
+                   If provided, token count and cache status are recorded on it.
         """
         if self._use_cache:
             key = self._cache_key(data)
             cached = _cache.get(key)
             if cached is not None:
                 log.debug(f"Cache hit (stream) [{self._model}]")
+                if call_span is not None:
+                    call_span.cached = True
+                    call_span.output_tokens = len(cached.split())
                 yield cached
                 return
 
@@ -152,9 +168,9 @@ class AsyncLLMAdapter:
             full_response.append(result)
             yield result
 
-        if self._use_cache and full_response:
-            _cache.set(
-                self._cache_key(data),
-                "".join(full_response),
-                expire=CACHE_TTL,
-            )
+        if full_response:
+            joined = "".join(full_response)
+            if call_span is not None:
+                call_span.output_tokens = len(joined.split())
+            if self._use_cache:
+                _cache.set(self._cache_key(data), joined, expire=CACHE_TTL)

@@ -23,6 +23,14 @@ CONCURRENCY = int(os.getenv('PRAKTOR_CONCURRENCY', '4'))
 CACHE_DIR = os.getenv('CACHE_DIR', '/tmp/praktor_cache')
 CACHE_TTL = int(os.getenv('CACHE_TTL', '3600'))
 
+# --- LLM backend ---
+OLLAMA_HOST = os.getenv('OLLAMA_HOST', 'http://localhost:11434')
+
+# --- Observability ---
+# Set OTLP_ENDPOINT to export spans to a collector (e.g. "http://localhost:4317")
+# If unset, spans are printed to stdout (ConsoleSpanExporter) for local dev.
+OTLP_ENDPOINT = os.getenv('OTLP_ENDPOINT', '')
+
 # --- Logging ---
 _LOG_FILE = 'praktor.ai.log'
 _MAX_BYTES = 10 * 1024 * 1024  # 10 MB

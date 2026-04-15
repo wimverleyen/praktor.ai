@@ -2,4 +2,8 @@
 .env
 .DS_Store
 /markdowns/
-gstack.md
+gstack.md__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+praktor-dashboard.json
