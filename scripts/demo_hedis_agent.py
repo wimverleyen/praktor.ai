@@ -24,11 +24,17 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "praktor"))
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+# Suppress OTel console span dumps unless an endpoint is configured.
+# The SDK writes JSON to stdout when OTLP_ENDPOINT is unset, which clutters demo output.
+import os as _os
+if not _os.getenv("OTLP_ENDPOINT"):
+    _os.environ.setdefault("OTEL_SDK_DISABLED", "true")
 
 # Seed demo data if not already present
-from scripts.init_member_brain import seed_demo, DEMO_MEMBERS, hash_member_id
+from scripts.init_member_brain import seed_demo, DEMO_MEMBERS, hash_member_id, YEAR
 from clinical.agents.hedis_gap_agent import HEDISGapDefinition, parse_next_best_action
-from clinical.schemas import YEAR
 
 # ANSI colours
 _RESET = "\033[0m"
@@ -122,11 +128,20 @@ LANGUAGE: {member_data['language']}""",
         for chunk in text.split(" "):
             yield chunk + " "
 
-    # Patch the react adapter
-    if agent._react_adapter:
-        agent._react_adapter.ainvoke = mock_ainvoke
-        agent._react_adapter.astream = mock_astream
-    # Also patch primary adapter for template rendering
+    # Force-initialize the ReAct adapter now (it's built lazily on first run).
+    # Without this, the patch below has nothing to patch and Ollama gets called.
+    if agent._react_adapter is None:
+        from LLM.llm_interface import AsyncLLMAdapter
+        from core.agent import _REACT_WRAPPER
+        agent._react_adapter = AsyncLLMAdapter(
+            prompt_template=_REACT_WRAPPER,
+            model=agent._definition.llm_model,
+            temperature=agent._definition.temperature,
+        )
+
+    agent._react_adapter.ainvoke = mock_ainvoke
+    agent._react_adapter.astream = mock_astream
+    # Also patch primary adapter (used to render the base user prompt)
     agent._adapter.ainvoke = mock_ainvoke
 
 

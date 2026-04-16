@@ -21,11 +21,20 @@ log = create_log()
 # ---------------------------------------------------------------------------
 
 _OTLP_ENDPOINT = os.getenv("OTLP_ENDPOINT", "")
+_OTEL_QUIET = os.getenv("OTEL_SDK_DISABLED", "").lower() in ("true", "1", "yes")
 
 _resource = Resource.create({"service.name": "praktor.ai"})
 _provider = TracerProvider(resource=_resource)
 
-if _OTLP_ENDPOINT:
+if _OTEL_QUIET:
+    from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult
+    class _NoOpExporter(SpanExporter):
+        def export(self, spans):
+            return SpanExportResult.SUCCESS
+        def shutdown(self):
+            pass
+    _exporter = _NoOpExporter()
+elif _OTLP_ENDPOINT:
     try:
         from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
         _exporter = OTLPSpanExporter(endpoint=_OTLP_ENDPOINT, insecure=True)
