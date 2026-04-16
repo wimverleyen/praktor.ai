@@ -17,3 +17,4 @@ diskcache>=5.0.0
 duckduckgo-search>=6.0.0
 dspy-ai>=3.0
 prometheus-client>=0.20.0
+streamlit>=1.35.0

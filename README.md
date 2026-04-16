@@ -382,10 +382,37 @@ praktor.ai/
 │   ├── test_prompt_versioning.py # 27 tests: registry, judge, optimizer
 │   └── test_monitoring.py       # 47 tests: cost, store, registry, Grafana
 │
+├── praktor/ui/
+│   └── app.py                   # Streamlit demo UI (3 tabs)
+│
 ├── praktor-dashboard.json       # Grafana dashboard (import-ready)
 ├── .env.example
 └── requirements.txt
 ```
+
+---
+
+## Streamlit UI
+
+A browser-based demo with three tabs:
+
+| Tab | What it shows |
+|-----|--------------|
+| **Span Tracer** | Waterfall view of every agent run: latency bars, token counts, pass breakdown, error highlighting |
+| **Skills** | Browse all registered agents, auto-generated input forms, run any agent and stream the response |
+| **Documents** | Upload PDFs → embed with Ollama → build/update the FAISS vector store |
+
+```bash
+# Install Streamlit (included in requirements.txt)
+pip install streamlit
+
+# Launch
+./scripts/run_ui.sh
+# or
+PYTHONPATH=praktor streamlit run praktor/ui/app.py
+```
+
+The UI reads from `~/.praktor/monitoring.db` — start the consumer and publish tasks to populate the Span Tracer.
 
 ---
 
