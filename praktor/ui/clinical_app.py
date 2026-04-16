@@ -157,7 +157,7 @@ def tab_queue():
              "scheduling_assist", "telehealth_offer", "escalate"],
         )
     with col_refresh:
-        if st.button("Refresh", use_container_width=True):
+        if st.button("Refresh", key="queue_refresh", use_container_width=True):
             st.cache_data.clear()
 
     recs = _load_pending_recs(100)
@@ -365,7 +365,7 @@ def tab_member():
 
     # Run agent on this member
     st.markdown("**Run HEDIS Gap Agent**")
-    model = st.text_input("Model", value=os.getenv("PRAKTOR_MODEL", "qwen2.5"),
+    model = st.text_input("Model", value=os.getenv("PRAKTOR_MODEL", "llama3:8b"),
                           key="member_model")
     dry_run = st.checkbox("Dry run (no LLM)", value=True, key="member_dry_run")
 
@@ -681,7 +681,7 @@ def tab_tracer():
         limit = st.number_input("Max rows", min_value=10, max_value=500, value=50, step=10)
     with col_refresh:
         st.write("")  # vertical align
-        if st.button("Refresh", use_container_width=True):
+        if st.button("Refresh", key="tracer_refresh", use_container_width=True):
             st.cache_data.clear()
 
     runs = _tracer_query_runs(float(hours), agent_filter, int(limit))

@@ -109,7 +109,7 @@ HEDISGapDefinition = AgentDefinition(
     name="hedis_gap",
     prompt_template=_GAP_AGENT_PROMPT,
     input_schema=HEDISGapInput,
-    llm_model="qwen2.5",        # override with claude-sonnet-4-6 for production
+    llm_model="llama3:8b",      # override with claude-sonnet-4-6 for production
     temperature=0.0,
     tools=[
         "gap_registry",

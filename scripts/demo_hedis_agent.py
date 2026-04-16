@@ -204,7 +204,7 @@ async def run_member(
 
 async def main_async(args) -> None:
     _header("praktor.ai — HEDIS Gap Closure Agent Demo")
-    print(f"  Model: {args.model} | Mode: {'DRY RUN' if args.dry_run else 'LIVE'}")
+    print(f"  Model: {'dry-run' if args.dry_run else args.model} | Mode: {'DRY RUN' if args.dry_run else 'LIVE'}")
     print(f"  Measurement year: {YEAR}")
 
     # Seed demo data
@@ -239,7 +239,7 @@ async def main_async(args) -> None:
 
 def main():
     parser = argparse.ArgumentParser(description="HEDIS Gap Closure Agent Demo")
-    parser.add_argument("--model", default="qwen2.5", help="LLM model (default: qwen2.5)")
+    parser.add_argument("--model", default="llama3:8b", help="LLM model (default: llama3:8b)")
     parser.add_argument("--dry-run", action="store_true", help="Skip LLM calls (instant demo)")
     parser.add_argument("--member", type=int, default=None,
                         help="Run single member by index 0-4 (default: all)")
