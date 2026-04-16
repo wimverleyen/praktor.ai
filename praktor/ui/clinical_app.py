@@ -7,6 +7,7 @@ Tabs:
   1. Queue      — care manager review queue ranked by priority
   2. Member     — full member context: gaps, SDOH, outreach, labs
   3. Analytics  — closure rates, STARS impact projection, model performance
+  4. Traces     — OTel trajectory waterfall: every ReAct step as a span
 
 Run:
     PYTHONPATH=praktor streamlit run praktor/ui/clinical_app.py
@@ -16,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import sqlite3
 import sys
 import time
 from datetime import datetime
@@ -24,9 +26,12 @@ from typing import Any
 
 import streamlit as st
 
-_ROOT = Path(__file__).parent.parent
+_ROOT = Path(__file__).parent.parent          # praktor/
+_REPO_ROOT = _ROOT.parent                      # praktor.ai/
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
 st.set_page_config(
     page_title="praktor.ai Clinical",
@@ -470,6 +475,272 @@ def tab_analytics():
 
 
 # ---------------------------------------------------------------------------
+# Tab 4: Span Tracer
+# ---------------------------------------------------------------------------
+
+def _monitoring_db_path() -> str:
+    return os.getenv(
+        "PRAKTOR_MONITORING_DB",
+        str(Path.home() / ".praktor" / "monitoring.db"),
+    )
+
+
+def _tracer_query_runs(hours: float, agent_filter: str | None, limit: int) -> list[dict]:
+    db = _monitoring_db_path()
+    if not Path(db).exists():
+        return []
+    since = time.time() - hours * 3600
+    clauses = ["timestamp >= ?"]
+    params: list[Any] = [since]
+    if agent_filter:
+        clauses.append("agent_type = ?")
+        params.append(agent_filter)
+    where = " AND ".join(clauses)
+    conn = sqlite3.connect(db)
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute(
+            f"SELECT * FROM agent_runs WHERE {where} ORDER BY timestamp DESC LIMIT ?",
+            params + [limit],
+        ).fetchall()
+        return [dict(r) for r in rows]
+    except Exception:
+        return []
+    finally:
+        conn.close()
+
+
+def _tracer_query_steps(run_id: int) -> list[dict]:
+    db = _monitoring_db_path()
+    if not Path(db).exists():
+        return []
+    conn = sqlite3.connect(db)
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute(
+            "SELECT * FROM trajectory_steps WHERE run_id = ? ORDER BY step, id",
+            (run_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    except Exception:
+        return []
+    finally:
+        conn.close()
+
+
+def _tracer_distinct_agents() -> list[str]:
+    db = _monitoring_db_path()
+    if not Path(db).exists():
+        return []
+    conn = sqlite3.connect(db)
+    try:
+        rows = conn.execute(
+            "SELECT DISTINCT agent_type FROM agent_runs ORDER BY agent_type"
+        ).fetchall()
+        return [r[0] for r in rows]
+    except Exception:
+        return []
+    finally:
+        conn.close()
+
+
+def _fmt_ms(ms: float) -> str:
+    if ms >= 1000:
+        return f"{ms / 1000:.1f}s"
+    return f"{ms:.0f}ms"
+
+
+def _span_status_badge(status: str) -> str:
+    return {"ok": "🟢", "error": "🔴"}.get(status, "🟡")
+
+
+def _step_kind_icon(kind: str) -> str:
+    return {"llm_call": "🧠", "tool_call": "🔧", "improvement_pass": "✨"}.get(kind, "▸")
+
+
+def _step_bar_color(step: dict) -> str:
+    if step.get("error"):
+        return "#d9534f"   # red
+    if step.get("cached"):
+        return "#5cb85c"   # green
+    if step.get("kind") == "tool_call":
+        return "#5bc0de"   # cyan-blue
+    return "#9b59b6"       # purple for LLM calls
+
+
+def _render_waterfall(run: dict):
+    """Render one agent run's span details + trajectory waterfall."""
+    c1, c2, c3, c4 = st.columns(4)
+    c1.markdown(f"**Session**  \n`{run['session_id'][:16]}…`")
+    c2.markdown(f"**Status**  \n{_span_status_badge(run['status'])} {run['status']}")
+    c3.markdown(f"**Model**  \n`{run['model']}`")
+    c4.markdown(f"**Passes**  \n{run['passes']}")
+
+    token_col, cost_col, cache_col = st.columns(3)
+    token_col.markdown(
+        f"**Tokens**  \n{run['input_tokens']} in · {run['output_tokens']} out "
+        f"· **{run['total_tokens']} total**"
+    )
+    cost_usd = run.get("cost_usd", 0.0)
+    cost_col.markdown(
+        f"**Cost**  \n{'$0.00 (local)' if cost_usd == 0 else f'${cost_usd:.5f}'}"
+    )
+    cache_col.markdown(
+        f"**Cache**  \n{'💾 hit' if run.get('cached') else '⚡ miss'}"
+    )
+
+    if run.get("error"):
+        st.error(f"**Error:** {run['error']}")
+
+    steps = _tracer_query_steps(run["id"])
+    if not steps:
+        st.caption("No trajectory steps recorded for this run.")
+        st.caption(
+            "Trajectory steps are written by the monitoring collector. "
+            "Run `python scripts/demo_hedis_agent.py --dry-run` to generate data."
+        )
+        return
+
+    st.markdown("---")
+    st.markdown(
+        f"**Trajectory — {len(steps)} span{'s' if len(steps) != 1 else ''}**  "
+        f"&nbsp;&nbsp; 🧠 LLM call &nbsp; 🔧 tool call &nbsp; 💾 cached &nbsp; 🔴 error"
+    )
+
+    # Total wall-clock for proportional bars — use sum of latencies
+    total_ms = sum(s.get("latency_ms", 0) for s in steps) or 1.0
+
+    # Accumulate offset for Gantt-style positioning
+    offset_ms = 0.0
+    for step in steps:
+        latency = step.get("latency_ms", 0) or 0
+        icon = _step_kind_icon(step.get("kind", ""))
+        color = _step_bar_color(step)
+
+        # Label
+        parts = [f"{icon} **step {step['step']}** · `{step['kind']}`"]
+        if step.get("tool_name"):
+            parts.append(f"tool=**{step['tool_name']}**")
+        parts.append(_fmt_ms(latency))
+        if step.get("output_tokens"):
+            parts.append(f"{step['output_tokens']} tok")
+        if step.get("cached"):
+            parts.append("💾")
+        if step.get("error"):
+            parts.append("🔴")
+
+        col_label, col_bar = st.columns([3, 3])
+        with col_label:
+            st.markdown(" · ".join(parts))
+            if step.get("error"):
+                st.caption(f"↳ {step['error'][:120]}")
+
+        with col_bar:
+            # Gantt: offset bar + span bar on same row using flex div
+            offset_pct = offset_ms / total_ms * 100
+            span_pct = max(latency / total_ms * 100, 1.0)   # at least 1% wide
+            st.markdown(
+                f'<div style="display:flex;align-items:center;height:20px;margin-top:2px">'
+                f'<div style="width:{offset_pct:.1f}%;min-width:0"></div>'
+                f'<div style="background:{color};height:16px;width:{span_pct:.1f}%;'
+                f'border-radius:3px;min-width:4px"></div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+
+        offset_ms += latency
+
+    # Timeline footer
+    st.caption(
+        f"Total wall time: {_fmt_ms(run['duration_ms'])} · "
+        f"Trajectory span sum: {_fmt_ms(sum(s.get('latency_ms', 0) for s in steps))}"
+    )
+
+
+def tab_tracer():
+    st.subheader("Span Tracer")
+    st.caption(
+        "OTel trajectory waterfall — every ReAct step (LLM call or tool call) "
+        "recorded as a span in the monitoring store."
+    )
+
+    col_f1, col_f2, col_f3, col_refresh = st.columns([2, 2, 1, 1])
+    with col_f1:
+        hours = st.selectbox(
+            "Time window", [1, 6, 24, 72, 168], index=2,
+            format_func=lambda h: f"Last {h}h",
+        )
+    with col_f2:
+        agents = _tracer_distinct_agents()
+        options = ["All agents"] + agents
+        # Default to hedis_gap if present
+        default_idx = options.index("hedis_gap") if "hedis_gap" in options else 0
+        selected = st.selectbox("Agent", options, index=default_idx)
+        agent_filter = None if selected == "All agents" else selected
+    with col_f3:
+        limit = st.number_input("Max rows", min_value=10, max_value=500, value=50, step=10)
+    with col_refresh:
+        st.write("")  # vertical align
+        if st.button("Refresh", use_container_width=True):
+            st.cache_data.clear()
+
+    runs = _tracer_query_runs(float(hours), agent_filter, int(limit))
+
+    if not runs:
+        st.info(
+            "No runs in the monitoring store yet.\n\n"
+            "Generate data with:\n"
+            "```bash\n"
+            "PYTHONPATH=praktor python scripts/demo_hedis_agent.py --dry-run\n"
+            "```"
+        )
+        return
+
+    # Summary metrics
+    ok = sum(1 for r in runs if r["status"] == "ok")
+    errors = len(runs) - ok
+    avg_ms = sum(r["duration_ms"] for r in runs) / len(runs)
+    p95_idx = max(0, int(len(runs) * 0.95) - 1)
+    p95_ms = sorted(r["duration_ms"] for r in runs)[p95_idx]
+    total_tokens = sum(r["total_tokens"] for r in runs)
+    cache_hits = sum(1 for r in runs if r.get("cached"))
+
+    m1, m2, m3, m4, m5 = st.columns(5)
+    m1.metric("Runs", len(runs))
+    m2.metric("Success rate", f"{ok / len(runs):.0%}", delta=f"{errors} errors" if errors else None,
+              delta_color="inverse")
+    m3.metric("Avg latency", _fmt_ms(avg_ms))
+    m4.metric("P95 latency", _fmt_ms(p95_ms))
+    m5.metric("Total tokens", f"{total_tokens:,}")
+
+    # Cache + token breakdown
+    if cache_hits:
+        st.caption(f"💾 Cache hits: {cache_hits}/{len(runs)} runs  ({cache_hits/len(runs):.0%})")
+
+    st.divider()
+    st.markdown(f"**{len(runs)} run{'s' if len(runs) != 1 else ''} — click to expand waterfall**")
+
+    for i, run in enumerate(runs):
+        ts = datetime.fromtimestamp(run["timestamp"]).strftime("%Y-%m-%d %H:%M:%S")
+        badge = _span_status_badge(run["status"])
+        cached_tag = " 💾" if run.get("cached") else ""
+        session_short = run["session_id"][:12]
+
+        # Step count from trajectory if available
+        steps = _tracer_query_steps(run["id"])
+        step_tag = f" · {len(steps)} steps" if steps else ""
+
+        label = (
+            f"{badge} **{run['agent_type']}** · `{session_short}…` · "
+            f"{_fmt_ms(run['duration_ms'])} · {run['total_tokens']} tok"
+            f"{cached_tag}{step_tag} · {ts}"
+        )
+
+        with st.expander(label, expanded=(i == 0)):
+            _render_waterfall(run)
+
+
+# ---------------------------------------------------------------------------
 # Sidebar
 # ---------------------------------------------------------------------------
 
@@ -509,7 +780,7 @@ def main():
     st.title("🏥 praktor.ai Clinical")
     st.caption("HEDIS Gap Closure · Clinical Reasoning · Karpathy Second Brain")
 
-    tab1, tab2, tab3 = st.tabs(["📋 Queue", "👤 Member", "📊 Analytics"])
+    tab1, tab2, tab3, tab4 = st.tabs(["📋 Queue", "👤 Member", "📊 Analytics", "🔍 Traces"])
 
     with tab1:
         tab_queue()
@@ -519,6 +790,9 @@ def main():
 
     with tab3:
         tab_analytics()
+
+    with tab4:
+        tab_tracer()
 
 
 if __name__ == "__main__":
