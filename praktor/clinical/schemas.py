@@ -1,0 +1,259 @@
+"""
+Shared data schemas for the clinical reasoning layer.
+
+All member identifiers are hashed before storage — never raw MRN or member_id.
+phi_scrubbed=True is enforced as a hard gate before any FAISS write or LLM call.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import os
+import time
+from dataclasses import dataclass, field
+from typing import Literal
+
+
+# ---------------------------------------------------------------------------
+# Member identity helpers
+# ---------------------------------------------------------------------------
+
+_MEMBER_SALT = os.getenv("PRAKTOR_MEMBER_SALT", "praktor-clinical-default-salt")
+
+
+def hash_member_id(raw_member_id: str) -> str:
+    """
+    One-way hash for member identifiers.
+    Uses PRAKTOR_MEMBER_SALT env var — set a unique secret per environment.
+    Returns 64-char hex string (full SHA-256).
+    """
+    salted = f"{_MEMBER_SALT}:{raw_member_id}"
+    return hashlib.sha256(salted.encode()).hexdigest()
+
+
+def short_id(member_id_hash: str) -> str:
+    """First 12 chars for display labels only — never for storage or lookup."""
+    return member_id_hash[:12]
+
+
+# ---------------------------------------------------------------------------
+# HEDIS gap record
+# ---------------------------------------------------------------------------
+
+@dataclass
+class HEDISGap:
+    """One open HEDIS gap for a member in the current measurement year."""
+
+    member_id_hash: str
+    measure_id: str           # e.g. "MAC", "MAD", "MAP", "CDC-HbA1c", "BCS"
+    measure_name: str         # human-readable
+    stars_weight: float       # 1.0, 2.0, or 3.0 (triple-weighted = medication adherence)
+    measurement_year: int
+    days_remaining: int       # days until Dec 31 of measurement_year
+    last_service_date: str | None = None   # ISO 8601 or None
+    estimated_stars_impact: float = 0.0   # weight × plan-level gap rate contribution
+    pdc_current: float | None = None      # current PDC (medication adherence measures)
+    pdc_threshold: float = 0.80           # NCQA threshold (0.80 for all adherence measures)
+
+    @property
+    def pdc_gap(self) -> float | None:
+        """How far below threshold — positive means gap exists."""
+        if self.pdc_current is None:
+            return None
+        return max(0.0, self.pdc_threshold - self.pdc_current)
+
+    @property
+    def priority_score(self) -> float:
+        """
+        Stars weight × urgency (inverse days remaining) × closability.
+        Higher = act first.
+        """
+        urgency = max(0.1, 1.0 - (self.days_remaining / 365.0))
+        closability = 1.0 if (self.pdc_gap or 0) < 0.15 else 0.6
+        return round(self.stars_weight * urgency * closability, 3)
+
+
+# ---------------------------------------------------------------------------
+# Clinical brain chunk (FAISS unit)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class ClinicalBrainChunk:
+    """
+    One document chunk stored in the member's FAISS second brain.
+
+    phi_scrubbed MUST be True before any chunk reaches FAISS or an LLM prompt.
+    The privacy gate in member_brain.py raises ValueError if False.
+    """
+
+    member_id_hash: str
+    source_type: Literal[
+        "claim", "ehr_lab", "ehr_vital", "ehr_note",
+        "outreach", "sdoh", "rx_fill", "pdc_score"
+    ]
+    date: str                    # ISO 8601
+    content: str                 # de-identified text or structured summary
+    phi_scrubbed: bool           # HARD GATE — must be True
+    icd_codes: list[str] = field(default_factory=list)
+    cpt_codes: list[str] = field(default_factory=list)
+    ndc_codes: list[str] = field(default_factory=list)
+    provenance: str = ""         # source system + extract date
+
+
+# ---------------------------------------------------------------------------
+# Next Best Action recommendation
+# ---------------------------------------------------------------------------
+
+@dataclass
+class NextBestAction:
+    """Recommendation produced by the HEDIS gap closure agent."""
+
+    member_id_hash: str
+    gap_measure_id: str
+    action_type: Literal[
+        "pcp_warm_outreach",
+        "pharmacy_refill_reminder",
+        "scheduling_assist",
+        "telehealth_offer",
+        "member_direct_outreach",
+        "exclusion_flag",
+        "escalate",
+    ]
+    priority_score: float
+    rationale: str               # from ReAct reasoning chain
+    draft_content: str           # ready-to-use outreach message
+    language: str                # member preferred language (ISO 639-1)
+    closure_probability: float   # model-estimated 0.0–1.0
+    reasoning_span_id: str = ""  # OTel span ID — audit trail
+    timestamp: float = field(default_factory=time.time)
+
+    @property
+    def should_escalate(self) -> bool:
+        return self.action_type == "escalate" or self.closure_probability < 0.4
+
+
+# ---------------------------------------------------------------------------
+# Clinical judge score
+# ---------------------------------------------------------------------------
+
+@dataclass
+class ClinicalJudgeScore:
+    """4-criterion quality score for a NextBestAction recommendation."""
+
+    recommendation_id: str
+    gap_identification_accuracy: float   # 0–10: right gap, right reason
+    action_appropriateness: float        # 0–10: right action for this member
+    evidence_citation_quality: float     # 0–10: reasoning grounded in record
+    safety_flag_coverage: float          # 0–10: exclusions + contraindications checked
+    reasoning: str = ""
+    outcome: str | None = None           # "closed" | "not_closed" | "pending"
+
+    @property
+    def overall(self) -> float:
+        return round(
+            (self.gap_identification_accuracy
+             + self.action_appropriateness
+             + self.evidence_citation_quality
+             + self.safety_flag_coverage) / 4.0,
+            2,
+        )
+
+    def summary(self) -> str:
+        return (
+            f"overall={self.overall:.1f}/10  "
+            f"gap_id={self.gap_identification_accuracy:.1f}  "
+            f"action={self.action_appropriateness:.1f}  "
+            f"evidence={self.evidence_citation_quality:.1f}  "
+            f"safety={self.safety_flag_coverage:.1f}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# HEDIS measure catalogue (Phase 1: public NCQA specs only)
+# ---------------------------------------------------------------------------
+
+HEDIS_MEASURES: dict[str, dict] = {
+    # Triple-weighted (3x STARS) — medication adherence
+    "MAC": {
+        "name": "Medication Adherence for Cholesterol (Statins)",
+        "stars_weight": 3.0,
+        "description": "Members 18+ with a statin fill who achieved PDC >= 0.80.",
+        "threshold": 0.80,
+        "closure_action": "pharmacy_refill_reminder",
+        "drug_classes": ["statin"],
+        "icd_relevant": ["Z87.39", "I10", "E78.00", "I25.10"],
+        "source": "NCQA HEDIS 2024",
+    },
+    "MAD": {
+        "name": "Medication Adherence for Diabetes (Oral Hypoglycemics)",
+        "stars_weight": 3.0,
+        "description": "Members 18–75 with diabetes and oral hypoglycemic fills who achieved PDC >= 0.80.",
+        "threshold": 0.80,
+        "closure_action": "pharmacy_refill_reminder",
+        "drug_classes": ["oral_hypoglycemic", "metformin", "glp1"],
+        "icd_relevant": ["E11", "E11.9", "E11.65"],
+        "source": "NCQA HEDIS 2024",
+    },
+    "MAP": {
+        "name": "Medication Adherence for Hypertension (RASA)",
+        "stars_weight": 3.0,
+        "description": "Members 18–85 with hypertension and RASA fills who achieved PDC >= 0.80.",
+        "threshold": 0.80,
+        "closure_action": "pharmacy_refill_reminder",
+        "drug_classes": ["ace_inhibitor", "arb", "rasa"],
+        "icd_relevant": ["I10", "I11", "I12", "I13"],
+        "source": "NCQA HEDIS 2024",
+    },
+    # Double-weighted (2x STARS)
+    "CBP": {
+        "name": "Controlling High Blood Pressure",
+        "stars_weight": 2.0,
+        "description": "Members 18–85 with hypertension whose blood pressure was adequately controlled (<140/90).",
+        "threshold": None,
+        "closure_action": "scheduling_assist",
+        "drug_classes": [],
+        "icd_relevant": ["I10"],
+        "source": "NCQA HEDIS 2024",
+    },
+    # Single-weighted (1x STARS)
+    "CDC-HbA1c": {
+        "name": "Comprehensive Diabetes Care: HbA1c Testing",
+        "stars_weight": 1.0,
+        "description": "Members 18–75 with diabetes who had an HbA1c test in the measurement year.",
+        "threshold": None,
+        "closure_action": "scheduling_assist",
+        "drug_classes": [],
+        "icd_relevant": ["E11", "E10", "E13"],
+        "source": "NCQA HEDIS 2024",
+    },
+    "CDC-HbA1c-Control": {
+        "name": "Comprehensive Diabetes Care: HbA1c Control (<8%)",
+        "stars_weight": 1.0,
+        "description": "Members 18–75 with diabetes whose most recent HbA1c was <8.0%.",
+        "threshold": None,
+        "closure_action": "telehealth_offer",
+        "drug_classes": [],
+        "icd_relevant": ["E11", "E10", "E13"],
+        "source": "NCQA HEDIS 2024",
+    },
+    "BCS": {
+        "name": "Breast Cancer Screening",
+        "stars_weight": 1.0,
+        "description": "Women 50–74 who had a mammogram in the past 2 years.",
+        "threshold": None,
+        "closure_action": "scheduling_assist",
+        "drug_classes": [],
+        "icd_relevant": [],
+        "source": "NCQA HEDIS 2024",
+    },
+    "COL": {
+        "name": "Colorectal Cancer Screening",
+        "stars_weight": 1.0,
+        "description": "Members 45–75 with appropriate colorectal cancer screening.",
+        "threshold": None,
+        "closure_action": "scheduling_assist",
+        "drug_classes": [],
+        "icd_relevant": [],
+        "source": "NCQA HEDIS 2024",
+    },
+}

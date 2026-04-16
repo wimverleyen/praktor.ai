@@ -13,6 +13,8 @@ To add a new agent:
 
 from core.router import get_global_router
 
+import clinical.agents  # registers clinical agents (HEDIS gap closure)
+
 from agents.thank_you import ThankYouDefinition
 from agents.message import MessageDefinition
 from agents.search import SearchDefinition

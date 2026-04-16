@@ -272,6 +272,112 @@ Child span attributes: `llm.pass`, `llm.kind`, `llm.output_tokens`, `llm.latency
 
 ---
 
+## Clinical reasoning — HEDIS gap closure
+
+A full clinical AI layer for Medicare Advantage care management, built directly on the praktor.ai framework. Closes HEDIS quality gaps by running a clinical ReAct reasoning loop per member and surfacing a ranked Next Best Action to a care manager.
+
+**STARS impact:** Targeting triple-weighted measures (MAC statin, MAD diabetes, MAP hypertension) first — each closed gap drives CMS Quality Bonus Payment improvement.
+
+### Quick demo (no Ollama required)
+
+```bash
+# 1. Seed 5 synthetic members (Spanish, Vietnamese, Mandarin, English profiles)
+PYTHONPATH=praktor python scripts/init_member_brain.py --seed-demo
+
+# 2. Run the HEDIS gap agent (dry run — instant, no LLM needed)
+PYTHONPATH=praktor python scripts/demo_hedis_agent.py --dry-run
+
+# 3. Real LLM (requires Ollama running locally)
+PYTHONPATH=praktor python scripts/demo_hedis_agent.py --model qwen2.5
+
+# 4. Clinical HITL review UI
+PYTHONPATH=praktor streamlit run praktor/ui/clinical_app.py
+```
+
+### Clinical agent
+
+| Agent type | What it does | Memory | ReAct steps |
+|------------|-------------|--------|-------------|
+| `hedis_gap` | Prioritize open HEDIS gaps, reason over PDC/labs/SDOH, produce Next Best Action | None | 7 |
+
+**7 clinical tools** the agent uses in its ReAct loop:
+
+| Tool | Input | What it returns |
+|------|-------|----------------|
+| `gap_registry` | `member_id_hash` | Open HEDIS gaps ranked by priority score |
+| `drug_adherence` | `{member_id_hash, drug_class}` | Pre-computed PDC scores vs. 0.80 threshold |
+| `claims_lookup` | `{member_id_hash, drug_class?}` | Rx fill history, days supply, NDC codes |
+| `ehr_lookup` | `{member_id_hash, data_type}` | Labs (HbA1c, LDL) and vitals |
+| `sdoh_lookup` | `member_id_hash` | Language, health literacy, PCP, pharmacy distance |
+| `outreach_history` | `{member_id_hash, measure_id?}` | Prior contact attempts and outcomes |
+| `measure_criteria` | `measure_id` | NCQA public spec — thresholds, exclusions, drug classes |
+
+### PHI gate — IRON RULE
+
+Every note, claim, or lab entering the vector store passes through a hard PHI gate:
+
+```python
+from clinical.privacy.deidentifier import validate_phi_scrubbed
+
+# HARD RAISE — never log and continue (HIPAA requirement)
+validate_phi_scrubbed(phi_scrubbed=chunk.phi_scrubbed, context="ingest:claim")
+```
+
+If `phi_scrubbed=False`, a `ValueError` is raised and ingestion aborts. The gate is enforced at `MemberBrain.add_chunk()` and all ingestion pipelines.
+
+```bash
+# PHI gate tests — must pass before any FAISS write path ships
+PYTHONPATH=praktor pytest tests/test_clinical_privacy.py -v
+# 23 passed
+```
+
+### Member brain (per-member FAISS shards)
+
+Three-layer longitudinal retrieval per member:
+1. **Member shard** — personal claims, labs, outreach history
+2. **Cohort shard** — aggregate patterns for similar member profiles
+3. **Clinical literature shard** — NCQA specs, clinical guidelines
+
+LRU cache capped at 128 hot shards (configurable via `PRAKTOR_BRAIN_CACHE_SIZE`).
+
+### Ingestion pipelines
+
+```bash
+# Claims (Rx + medical)
+PYTHONPATH=praktor python -m clinical.ingestion.claims_ingest --csv claims.csv
+
+# EHR labs and vitals
+PYTHONPATH=praktor python -m clinical.ingestion.ehr_ingest --labs labs.csv --vitals vitals.csv
+
+# Clinical notes (highest PHI risk — all text scrubbed before vectorization)
+PYTHONPATH=praktor python -m clinical.ingestion.notes_ingest --csv notes.csv
+```
+
+CSV formats accept a `raw_member_id` column — the raw ID is hashed (SHA-256 + salt) on entry and never stored.
+
+### Human-in-the-loop (HITL) review
+
+Every agent recommendation is staged for care manager review before action:
+
+```
+Agent output → ClosureTracker (pending) → Care manager approves/modifies/rejects
+                                         → Outcome tracked at 30/60/90 days
+                                         → Feeds PromptOptimizer with closure ground truth
+```
+
+Run `streamlit run praktor/ui/clinical_app.py` for the review queue UI.
+
+### Environment variables (clinical)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PRAKTOR_CLINICAL_DB` | `~/.praktor/clinical_data.db` | SQLite store for members, gaps, labs, claims |
+| `PRAKTOR_MEMBER_SALT` | `praktor-dev` | HMAC salt for member ID hashing — **change in production** |
+| `PRAKTOR_BRAIN_DIR` | `~/.praktor/member_brains` | Root directory for per-member FAISS shards |
+| `PRAKTOR_BRAIN_CACHE_SIZE` | `128` | Max hot FAISS shards in LRU cache |
+
+---
+
 ## Built-in agents
 
 | Agent type | What it does | Memory | Passes |
@@ -368,22 +474,47 @@ praktor.ai/
 │   ├── memory/                  # InMemoryBuffer + FAISSMemory
 │   ├── tools/                   # web_search (DuckDuckGo), file_io
 │   ├── transport/               # aio-pika consumer + producer
-│   └── LLM/                     # AsyncLLMAdapter (streaming + retry + cache)
+│   ├── LLM/                     # AsyncLLMAdapter (streaming + retry + cache)
+│   │
+│   └── clinical/                # Clinical AI — HEDIS gap closure
+│       ├── schemas.py           # HEDISGap, ClinicalBrainChunk, hash_member_id
+│       ├── agents/
+│       │   └── hedis_gap_agent.py  # HEDISGapDefinition + parse_next_best_action
+│       ├── tools/               # 7 clinical tools (gap_registry, drug_adherence, …)
+│       ├── memory/
+│       │   └── member_brain.py  # Per-member FAISS shards + LRU cache
+│       ├── data/
+│       │   └── clinical_store.py  # SQLite store (swap for Snowflake/FHIR in prod)
+│       ├── privacy/
+│       │   ├── deidentifier.py  # Presidio + regex PHI scrubber + PHI gate
+│       │   └── audit.py         # Append-only audit log (HIPAA)
+│       ├── ingestion/
+│       │   ├── claims_ingest.py # Rx + medical claims → clinical store
+│       │   ├── ehr_ingest.py    # Labs + vitals → clinical store
+│       │   └── notes_ingest.py  # Clinical notes → member FAISS brain (PHI gate)
+│       └── evaluation/
+│           ├── hedis_judge.py   # LLM-as-judge for clinical reasoning quality
+│           └── closure_tracker.py  # Outcome tracking → PromptOptimizer feedback
 │
 ├── scripts/
 │   ├── demo_react.py            # Interactive ReAct loop demo (colour output)
 │   ├── demo_monitoring.py       # Live terminal dashboard + Prometheus
 │   ├── demo_judge_optimization.py  # Judge eval + prompt optimization pipeline
-│   └── init_vector_db.py        # Seed FAISS store from PDF directory
+│   ├── init_vector_db.py        # Seed FAISS store from PDF directory
+│   ├── init_member_brain.py     # Seed 5 synthetic demo members + HEDIS gaps
+│   └── demo_hedis_agent.py      # HEDIS gap closure demo (--dry-run supported)
 │
 ├── tests/                       # pytest — all mocked, no live services needed
 │   ├── test_observability.py    # 17 tests: Span, TrajectoryEvent, LLMCallSpan
 │   ├── test_react.py            # 8 tests: ReAct loop + observability
 │   ├── test_prompt_versioning.py # 27 tests: registry, judge, optimizer
-│   └── test_monitoring.py       # 47 tests: cost, store, registry, Grafana
+│   ├── test_monitoring.py       # 47 tests: cost, store, registry, Grafana
+│   ├── test_clinical_privacy.py # 23 tests: PHI gate, deidentifier, member hashing (IRON RULE)
+│   └── test_hedis_agent.py      # 17 tests: parser, definition, escalation guardrails
 │
 ├── praktor/ui/
-│   └── app.py                   # Streamlit demo UI (3 tabs)
+│   ├── app.py                   # Streamlit demo UI (3 tabs: Span Tracer, Skills, Docs)
+│   └── clinical_app.py          # Clinical HITL review queue (care manager UI)
 │
 ├── praktor-dashboard.json       # Grafana dashboard (import-ready)
 ├── .env.example
@@ -420,7 +551,13 @@ The UI reads from `~/.praktor/monitoring.db` — start the consumer and publish 
 
 ```bash
 pytest tests/
-# 99 tests across observability, ReAct, prompt versioning, and monitoring
+# 99 core tests + 23 PHI gate tests + 17 HEDIS agent tests
+
+# PHI gate tests — IRON RULE: must pass before FAISS write path ships
+PYTHONPATH=praktor pytest tests/test_clinical_privacy.py -v
+
+# HEDIS agent tests
+PYTHONPATH=praktor pytest tests/test_hedis_agent.py -v
 ```
 
 All tests mock the LLM and filesystem. No live Ollama, RabbitMQ, or FAISS needed.
