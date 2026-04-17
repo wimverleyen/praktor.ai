@@ -477,7 +477,7 @@ praktor.ai/
 │   ├── LLM/                     # AsyncLLMAdapter (streaming + retry + cache)
 │   │
 │   └── clinical/                # Clinical AI — HEDIS gap closure
-│       ├── schemas.py           # HEDISGap, ClinicalBrainChunk, hash_member_id
+│       ├── schemas.py           # HEDISGap, ClinicalBrainChunk, ClinicalJudgeScore, DiabetesJudgeScore, hash_member_id
 │       ├── agents/
 │       │   └── hedis_gap_agent.py  # HEDISGapDefinition + parse_next_best_action
 │       ├── tools/               # 7 clinical tools (gap_registry, drug_adherence, …)
@@ -493,8 +493,10 @@ praktor.ai/
 │       │   ├── ehr_ingest.py    # Labs + vitals → clinical store
 │       │   └── notes_ingest.py  # Clinical notes → member FAISS brain (PHI gate)
 │       └── evaluation/
-│           ├── hedis_judge.py   # LLM-as-judge for clinical reasoning quality
-│           └── closure_tracker.py  # Outcome tracking → PromptOptimizer feedback
+│           ├── base_judge.py    # BaseJudge ABC — shared evaluate(), compare(), _parse_json() plumbing
+│           ├── hedis_judge.py   # HEDISJudge — LLM-as-judge for clinical reasoning quality
+│           ├── diabetes_hedis_judge.py  # DiabetesHEDISJudge — 10-criterion diabetes-specific judge
+│           └── closure_tracker.py  # Outcome tracking + get_review_queue() → PromptOptimizer feedback
 │
 ├── scripts/
 │   ├── demo_react.py            # Interactive ReAct loop demo (colour output)
@@ -502,15 +504,19 @@ praktor.ai/
 │   ├── demo_judge_optimization.py  # Judge eval + prompt optimization pipeline
 │   ├── init_vector_db.py        # Seed FAISS store from PDF directory
 │   ├── init_member_brain.py     # Seed 5 synthetic demo members + HEDIS gaps
-│   └── demo_hedis_agent.py      # HEDIS gap closure demo (--dry-run supported)
+│   ├── demo_hedis_agent.py      # HEDIS gap closure demo (--dry-run supported)
+│   └── demo_diabetes_agent.py   # Diabetes HEDIS gap closure demo (MY 2026, --dry-run supported)
 │
 ├── tests/                       # pytest — all mocked, no live services needed
 │   ├── test_observability.py    # 17 tests: Span, TrajectoryEvent, LLMCallSpan
 │   ├── test_react.py            # 8 tests: ReAct loop + observability
 │   ├── test_prompt_versioning.py # 27 tests: registry, judge, optimizer
-│   ├── test_monitoring.py       # 47 tests: cost, store, registry, Grafana
+│   ├── test_monitoring.py       # 53 tests: cost, store, registry, Grafana, record_judge
 │   ├── test_clinical_privacy.py # 23 tests: PHI gate, deidentifier, member hashing (IRON RULE)
-│   └── test_hedis_agent.py      # 17 tests: parser, definition, escalation guardrails
+│   ├── test_hedis_agent.py      # 17 tests: parser, definition, escalation guardrails
+│   ├── test_base_judge.py       # 20 tests: BaseJudge ABC, evaluate(), compare(), error paths
+│   ├── test_hedis_judge.py      # 8 tests: HEDISJudge scoring + inheritance
+│   └── test_diabetes_judge.py   # 12 tests: DiabetesHEDISJudge 10-criterion scoring
 │
 ├── praktor/ui/
 │   ├── app.py                   # Streamlit demo UI (3 tabs: Span Tracer, Skills, Docs)
@@ -551,7 +557,7 @@ The UI reads from `~/.praktor/monitoring.db` — start the consumer and publish 
 
 ```bash
 pytest tests/
-# 99 core tests + 23 PHI gate tests + 17 HEDIS agent tests
+# 99 core tests + 23 PHI gate tests + 17 HEDIS agent tests + 40 judge tests (BaseJudge, HEDISJudge, DiabetesHEDISJudge)
 
 # PHI gate tests — IRON RULE: must pass before FAISS write path ships
 PYTHONPATH=praktor pytest tests/test_clinical_privacy.py -v

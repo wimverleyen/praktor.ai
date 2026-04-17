@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.2.0.0] - 2026-04-17
+
+### Added
+- **BaseJudge ABC** (`praktor/clinical/evaluation/base_judge.py`) — shared `evaluate()`, `compare()`, `_parse_json()`, and `_init_adapters()` extracted from both clinical judge subclasses. Subclasses now implement two abstract methods (`_parse_score`, `_neutral_score`) and inherit all plumbing. Cuts ~150 lines of duplication. Empty `_eval_prompt` or `_compare_prompt` raises `ValueError` at instantiation (no silent misconfiguration).
+- **DiabetesJudgeScore** (`praktor/clinical/schemas.py`) — 10-criterion dataclass with `base_overall`, `diabetes_overall`, `overall`, and `summary()` properties. Co-located with `ClinicalJudgeScore` in the shared schema module.
+- **ClosureTracker.get_review_queue()** (`praktor/clinical/evaluation/closure_tracker.py`) — returns pending recommendations ordered by priority score, used by the clinical review queue UI.
+- **Color token layer** (`praktor/ui/theme.py`) — semantic color constants for the clinical UI (semantic/warning/error/info).
+- **TODOS.md** — tracked backlog for deferred items: structured output panel, error states, DESIGN.md, outcome= bias validation, on-demand eval format contract, judge_type aggregate query fix.
+
+### Changed
+- `HEDISJudge` and `DiabetesHEDISJudge` now inherit `BaseJudge`. Duplicate `evaluate()`, `compare()`, `_parse_json()`, and `_init_adapters()` removed from both.
+- `collector.record_judge()` accepts both legacy `JudgeScore` (`.criteria` dict) and new clinical score dataclasses (direct attrs). New `judge_type` parameter. All 10 criteria fields populated for diabetes evaluations.
+- `_parse_json` uses `JSONDecoder.raw_decode` instead of a greedy regex — correctly handles LLM responses that echo prompt variables before the JSON object.
+- `compare()` normalizes `winner` to `{"A", "B"}` — LLM responses of `"tie"`, `"C"`, or null fall back to `"A"`.
+- `PRAKTOR_MEMBER_SALT` missing-secret warning moved from module import time to first call of `hash_member_id()`, avoiding `warnings.warn` CI breakage with `-W error::UserWarning`.
+
+### Fixed
+- `_score_field` crash when `criteria` attribute exists but is `None` — now guards with `isinstance(score_obj.criteria, dict)`.
+- `_overall_score` crash when legacy `JudgeScore.score` is `None` — now uses `score or 0.0`.
+- `ClosureTracker` SQLite connection context manager pattern aligned with `MonitoringStore`.
+
+### Tests
+- 38 new tests: `test_base_judge.py` (20), `test_hedis_judge.py` (8), `test_diabetes_judge.py` (12), `test_monitoring.py` (6 new for `_score_field`/`_overall_score`/`record_judge`). 232 tests pass, 3 skipped.
+
+---
+
 ## v2.0.0 — General Agentic Framework
 
 ### What changed

@@ -169,6 +169,7 @@ class TestJudgeEvaluator:
             "accuracy": 8.0,
             "completeness": 7.0,
             "conciseness": 8.0,
+            "clarity": 8.0,
             "reasoning": "Good answer.",
         })
         judge = self._make_judge(payload)
@@ -179,7 +180,7 @@ class TestJudgeEvaluator:
 
     @pytest.mark.asyncio
     async def test_evaluate_handles_markdown_fences(self):
-        payload = '```json\n{"relevance":7,"accuracy":7,"completeness":7,"conciseness":7,"reasoning":"ok"}\n```'
+        payload = '```json\n{"relevance":7,"accuracy":7,"completeness":7,"conciseness":7,"clarity":7,"reasoning":"ok"}\n```'
         judge = self._make_judge(payload)
         score = await judge.evaluate("q", "a")
         assert score.score == pytest.approx(7.0)

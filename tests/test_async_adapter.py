@@ -34,11 +34,22 @@ class TestAsyncLLMAdapter:
     async def test_ainvoke_uses_cache_on_second_call(self):
         adapter, mock_llm = self._make_adapter()
 
-        with patch("LLM.llm_interface._invoke_with_retry", new_callable=AsyncMock) as mock_retry:
+        fresh_cache: dict = {}
+
+        def _cache_get(key, default=None):
+            return fresh_cache.get(key, default)
+
+        def _cache_set(key, value, **kwargs):
+            fresh_cache[key] = value
+
+        with patch("LLM.llm_interface._invoke_with_retry", new_callable=AsyncMock) as mock_retry, \
+             patch("LLM.llm_interface._cache") as mock_cache:
+            mock_cache.get.side_effect = _cache_get
+            mock_cache.set.side_effect = _cache_set
             mock_retry.return_value = "Cached response"
-            # First call
+            # First call — cache miss, hits retry
             r1 = await adapter.ainvoke({"question": "Same question?"})
-            # Second call — should hit cache
+            # Second call — should hit in-memory cache
             r2 = await adapter.ainvoke({"question": "Same question?"})
 
         assert r1 == r2 == "Cached response"

@@ -234,7 +234,7 @@ class TestDryRunExecution:
     async def test_dry_run_produces_action(self, tmp_path):
         """Agent dry-run returns a parseable action dict."""
         import dataclasses
-        from unittest.mock import AsyncMock
+        from unittest.mock import AsyncMock, MagicMock, patch
 
         from clinical.agents.hedis_gap_agent import HEDISGapDefinition, parse_next_best_action
         from clinical.schemas import hash_member_id
@@ -250,9 +250,6 @@ RATIONALE: Member has open MAC gap. PDC=0.62 below 0.80. Statin refill overdue.
 DRAFT_MESSAGE: Please refill your statin prescription at your pharmacy.
 LANGUAGE: en"""
 
-        defn = dataclasses.replace(HEDISGapDefinition, llm_model="dry-run-mock")
-        agent = Agent(defn)
-
         async def mock_ainvoke(payload, call_span=None):
             return dry_response
 
@@ -260,25 +257,28 @@ LANGUAGE: en"""
             for chunk in dry_response.split(" "):
                 yield chunk + " "
 
-        # Patch both adapters so any code path works
-        if agent._react_adapter:
-            agent._react_adapter.ainvoke = mock_ainvoke
-            agent._react_adapter.astream = mock_astream
-        if agent._adapter:
-            agent._adapter.ainvoke = mock_ainvoke
+        defn = dataclasses.replace(HEDISGapDefinition, llm_model="dry-run-mock")
+        # Patch AsyncLLMAdapter at the module level so the lazily-created
+        # _react_adapter picks up the mock (it's built inside _react_loop).
+        with patch("core.agent.AsyncLLMAdapter") as MockAdapter:
+            instance = MagicMock()
+            instance.ainvoke = mock_ainvoke
+            instance.astream = mock_astream
+            MockAdapter.return_value = instance
+            agent = Agent(defn)
 
-        member_hash = hash_member_id("TEST-DRY-001")
-        payload = {
-            "agent_type": "hedis_gap",
-            "member_id_hash": member_hash,
-            "member_id_hash_short": member_hash[:12],
-            "measurement_year": 2024,
-            "history": "",
-        }
+            member_hash = hash_member_id("TEST-DRY-001")
+            payload = {
+                "agent_type": "hedis_gap",
+                "member_id_hash": member_hash,
+                "member_id_hash_short": member_hash[:12],
+                "measurement_year": 2024,
+                "history": "",
+            }
 
-        chunks = []
-        async for chunk in agent.run(payload, session_id="test-dry-run"):
-            chunks.append(chunk)
+            chunks = []
+            async for chunk in agent.run(payload, session_id="test-dry-run"):
+                chunks.append(chunk)
 
         full = "".join(chunks)
         action = parse_next_best_action(full, member_hash)
@@ -306,34 +306,34 @@ RATIONALE: Very uncertain.
 DRAFT_MESSAGE: Maybe try outreach?
 LANGUAGE: en"""
 
-        defn = dataclasses.replace(HEDISGapDefinition, llm_model="dry-run-mock")
-        agent = Agent(defn)
-
-        async def mock_ainvoke(payload, call_span=None):
+        async def mock_ainvoke_low(payload, call_span=None):
             return low_confidence_response
 
-        async def mock_astream(payload, call_span=None):
+        async def mock_astream_low(payload, call_span=None):
             for chunk in low_confidence_response.split(" "):
                 yield chunk + " "
 
-        if agent._react_adapter:
-            agent._react_adapter.ainvoke = mock_ainvoke
-            agent._react_adapter.astream = mock_astream
-        if agent._adapter:
-            agent._adapter.ainvoke = mock_ainvoke
+        defn = dataclasses.replace(HEDISGapDefinition, llm_model="dry-run-mock")
+        from unittest.mock import MagicMock, patch
+        with patch("core.agent.AsyncLLMAdapter") as MockAdapter:
+            instance = MagicMock()
+            instance.ainvoke = mock_ainvoke_low
+            instance.astream = mock_astream_low
+            MockAdapter.return_value = instance
+            agent = Agent(defn)
 
-        member_hash = hash_member_id("TEST-DRY-002")
-        payload = {
-            "agent_type": "hedis_gap",
-            "member_id_hash": member_hash,
-            "member_id_hash_short": member_hash[:12],
-            "measurement_year": 2024,
-            "history": "",
-        }
+            member_hash = hash_member_id("TEST-DRY-002")
+            payload = {
+                "agent_type": "hedis_gap",
+                "member_id_hash": member_hash,
+                "member_id_hash_short": member_hash[:12],
+                "measurement_year": 2024,
+                "history": "",
+            }
 
-        chunks = []
-        async for chunk in agent.run(payload, session_id="test-low-conf"):
-            chunks.append(chunk)
+            chunks = []
+            async for chunk in agent.run(payload, session_id="test-low-conf"):
+                chunks.append(chunk)
 
         action = parse_next_best_action("".join(chunks), member_hash)
         assert action["action_type"] == "escalate", (

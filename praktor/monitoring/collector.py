@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from monitoring.cost import compute_cost
 from monitoring.store import RunRecord, JudgeEvalRecord
@@ -144,47 +144,77 @@ async def record_run(
         log.warning(f"monitoring.record_run failed (non-fatal): {e}")
 
 
+def _score_field(score_obj: Any, field: str) -> float | None:
+    """
+    Extract a named criterion from either score API:
+      - old JudgeScore:              score_obj.criteria.get(field)
+      - new ClinicalJudgeScore etc.: getattr(score_obj, field, None)
+    """
+    if hasattr(score_obj, "criteria") and isinstance(score_obj.criteria, dict):
+        return score_obj.criteria.get(field)
+    return getattr(score_obj, field, None)
+
+
+def _overall_score(score_obj: Any) -> float:
+    """
+    Extract overall score from either score API:
+      - old JudgeScore:  score_obj.score
+      - new dataclasses: score_obj.overall
+    """
+    if hasattr(score_obj, "score"):
+        return float(score_obj.score or 0.0)
+    return float(getattr(score_obj, "overall", 0.0))
+
+
 async def record_judge(
     session_id: str,
     agent_type: str,
     score_obj: Any,
     version_id: str | None = None,
+    judge_type: str = "general",
 ) -> None:
     """
-    Record a JudgeScore result.
+    Record a judge evaluation result.
 
-    Args:
-        session_id:  Current session identifier.
-        agent_type:  Agent that produced the response.
-        score_obj:   JudgeScore dataclass from core.judge.
-        version_id:  Active prompt version_id (optional).
+    Accepts both the legacy JudgeScore (core.judge) and the new
+    ClinicalJudgeScore / DiabetesJudgeScore dataclasses.
     """
     try:
         from monitoring.registry import get_registry
         from monitoring.store import JudgeEvalRecord
         registry = get_registry()
 
-        registry.record_judge(agent_type, score_obj.score, version_id)
+        overall = _overall_score(score_obj)
+        registry.record_judge(agent_type, overall, version_id)
 
         if registry._store:
             record = JudgeEvalRecord(
                 session_id=session_id,
                 agent_type=agent_type,
-                score=score_obj.score,
+                judge_type=judge_type,
+                score=overall,
                 timestamp=time.time(),
                 version_id=version_id,
-                relevance=score_obj.criteria.get("relevance"),
-                accuracy=score_obj.criteria.get("accuracy"),
-                completeness=score_obj.criteria.get("completeness"),
-                conciseness=score_obj.criteria.get("conciseness"),
-                reasoning=score_obj.reasoning,
-                question=score_obj.question,
+                accuracy=_score_field(score_obj, "accuracy"),
+                completeness=_score_field(score_obj, "completeness"),
+                relevance=_score_field(score_obj, "relevance"),
+                conciseness=_score_field(score_obj, "conciseness"),
+                clarity=_score_field(score_obj, "clarity"),
+                # HEDIS clinical extensions
+                gap_identification_accuracy=_score_field(score_obj, "gap_identification_accuracy"),
+                action_appropriateness=_score_field(score_obj, "action_appropriateness"),
+                evidence_citation_quality=_score_field(score_obj, "evidence_citation_quality"),
+                safety_flag_coverage=_score_field(score_obj, "safety_flag_coverage"),
+                # Diabetes extensions
+                inertia_detection_accuracy=_score_field(score_obj, "inertia_detection_accuracy"),
+                escalation_ladder_correctness=_score_field(score_obj, "escalation_ladder_correctness"),
+                gap_stacking_completeness=_score_field(score_obj, "gap_stacking_completeness"),
+                evidence_anchor_quality=_score_field(score_obj, "evidence_anchor_quality"),
+                safety_exclusion_coverage=_score_field(score_obj, "safety_exclusion_coverage"),
+                reasoning=getattr(score_obj, "reasoning", ""),
+                question=getattr(score_obj, "question", ""),
             )
             await registry._store.insert_judge_eval(record)
 
     except Exception as e:
         log.warning(f"monitoring.record_judge failed (non-fatal): {e}")
-
-
-# For type checking only
-from typing import Any
