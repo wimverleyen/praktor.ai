@@ -107,3 +107,19 @@ first use. Prevents confusion about why "completeness" is always 4-5/10.
 **Cons:** Longer placeholder text takes more visual space.
 
 **Context:** Identified by outside voice review (2026-04-17) in `/plan-eng-review`.
+
+---
+
+## [Monitoring] Add judge_type filter to aggregate queries
+
+**What:** `collector.record_judge()` stores a `judge_type` field but `store.query_metrics()`
+has no `judge_type` filter. Diabetes (10-dim) and HEDIS (9-dim) scores can mix with general
+(5-dim) scores in aggregate histograms if `judge_type` is omitted by callers.
+
+**Why:** The 10-dim diabetes `overall` and 5-dim general `overall` both use the 0–10 scale —
+the corruption is invisible in dashboards but makes cross-type comparisons meaningless.
+
+**Fix:** Add `judge_type: str | None = None` param to `store.query_metrics()` and an index
+on `judge_evals.judge_type`. Also add a DB index (`CREATE INDEX IF NOT EXISTS ...`).
+
+**Context:** Identified by adversarial review (2026-04-17) during `/ship`.

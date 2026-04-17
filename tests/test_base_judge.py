@@ -47,6 +47,37 @@ def _make_stub_judge(model: str = "test-model"):
 # ABC enforcement
 # ---------------------------------------------------------------------------
 
+class TestInitAdaptersGuard:
+
+    def test_missing_eval_prompt_raises(self):
+        from clinical.evaluation.base_judge import BaseJudge
+
+        class _NoPrompt(BaseJudge):
+            _eval_prompt = ""
+            _compare_prompt = "compare: {recommendation_a} vs {recommendation_b}"
+            _default_model = "test"
+
+            def _parse_score(self, r, rec): return {}
+            def _neutral_score(self, reason): return {}
+
+        with pytest.raises(ValueError, match="_eval_prompt"):
+            _NoPrompt()
+
+    def test_missing_compare_prompt_raises(self):
+        from clinical.evaluation.base_judge import BaseJudge
+
+        class _NoCompare(BaseJudge):
+            _eval_prompt = "evaluate: {response}"
+            _compare_prompt = ""
+            _default_model = "test"
+
+            def _parse_score(self, r, rec): return {}
+            def _neutral_score(self, reason): return {}
+
+        with pytest.raises(ValueError, match="_compare_prompt"):
+            _NoCompare()
+
+
 class TestAbstractEnforcement:
 
     def test_cannot_instantiate_base_judge_directly(self):
@@ -123,6 +154,12 @@ class TestParseJson:
         result = self.judge._parse_json("", self._default)
         assert result == self._default
 
+    def test_prose_before_json_does_not_corrupt_result(self):
+        # Regression: greedy regex matched from first { in prose to last }
+        text = 'Evaluating {recommendation}: result is {"winner": "B", "confidence": 0.7}'
+        result = self.judge._parse_json(text, self._default)
+        assert result.get("winner") == "B"
+
 
 # ---------------------------------------------------------------------------
 # compare()
@@ -156,6 +193,24 @@ class TestCompare:
         result = await judge.compare("rec_a", "rec_b", "context")
         assert result["winner"] == "A"
         assert "LLM unavailable" in result["reasoning"]
+
+    @pytest.mark.asyncio
+    async def test_compare_normalizes_invalid_winner(self):
+        judge = _make_stub_judge()
+        judge._compare_adapter.ainvoke = AsyncMock(
+            return_value='{"winner": "tie", "confidence": 0.5, "reasoning": "equal"}'
+        )
+        result = await judge.compare("rec_a", "rec_b", "context")
+        assert result["winner"] == "A"  # normalized from "tie"
+
+    @pytest.mark.asyncio
+    async def test_compare_normalizes_lowercase_winner(self):
+        judge = _make_stub_judge()
+        judge._compare_adapter.ainvoke = AsyncMock(
+            return_value='{"winner": "b", "confidence": 0.9, "reasoning": "B wins"}'
+        )
+        result = await judge.compare("rec_a", "rec_b", "context")
+        assert result["winner"] == "B"
 
 
 # ---------------------------------------------------------------------------
