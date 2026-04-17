@@ -10,8 +10,10 @@ Usage:
 from core.router import get_global_router
 
 from clinical.agents.hedis_gap_agent import HEDISGapDefinition
+from clinical.agents.diabetes_hedis_agent import DiabetesHEDISDefinition
 
 _router = get_global_router()
 _router.register(HEDISGapDefinition)
+_router.register(DiabetesHEDISDefinition)
 
-__all__ = ["HEDISGapDefinition"]
+__all__ = ["HEDISGapDefinition", "DiabetesHEDISDefinition"]

@@ -3,8 +3,9 @@ HEDIS measure criteria tool — returns measure specification and exclusion crit
 
 Uses NCQA public HEDIS measure specs only (no MCG licensing required).
 Phase 1: medication adherence measures (MAC, MAD, MAP) + key chronic disease measures.
+Phase 2: full diabetes measure set (GSD, KED, EED-E, SPD-E, BPD-E) — NCQA HEDIS MY 2026.
 
-Input: measure_id string (e.g., "MAC", "MAD", "MAP", "CDC-HbA1c")
+Input: measure_id string (e.g., "GSD", "KED", "EED-E", "SPD-E", "BPD-E", "MAC", "MAD")
 """
 
 from __future__ import annotations
@@ -14,7 +15,9 @@ from settings import create_log
 
 log = create_log()
 
-# NCQA HEDIS 2024 public measure specifications
+# NCQA HEDIS public measure specifications
+# Phase 1: MAC, MAD, MAP, CBP, CDC-HbA1c, BCS, COL  — NCQA HEDIS 2024
+# Phase 2: GSD, KED, EED-E, SPD-E, BPD-E             — NCQA HEDIS MY 2026
 # Source: https://www.ncqa.org/hedis/measures/
 _MEASURE_SPECS: dict[str, dict] = {
     "MAC": {
@@ -146,6 +149,168 @@ _MEASURE_SPECS: dict[str, dict] = {
         "notes": "Age range: 46–75. Multiple test types with different lookback periods.",
         "source": "NCQA HEDIS 2024 Technical Specifications",
     },
+
+    # -----------------------------------------------------------------------
+    # Diabetes measure set — NCQA HEDIS MY 2026 (from SKILL.md)
+    # -----------------------------------------------------------------------
+    "GSD": {
+        "full_name": "Glycemic Status Assessment for Patients with Diabetes",
+        "numerator": (
+            "Three rates reported: (1) Most recent A1c or GMI < 8.0%, "
+            "(2) Most recent A1c or GMI < 7.0%, "
+            "(3) Most recent A1c or GMI > 9.0% (INVERSE — poor control, triple-weighted in MA Stars)."
+        ),
+        "denominator": (
+            "Members 18–75 with diabetes: two DX codes (E10/E11/E13) on different dates in MY or PY, "
+            "OR dispensed insulin/hypoglycemics/antihyperglycemics with at least one DX code. "
+            "Metformin alone counts since MY 2024."
+        ),
+        "pdc_threshold": None,
+        "measurement_period": "Most recent A1c or GMI result during the measurement year",
+        "exclusions": [
+            "Hospice care during measurement year",
+            "Frailty AND advanced illness",
+            "Gestational diabetes only (ICD-10 O24.4)",
+            "Steroid-induced diabetes only",
+            "Members with bilateral adrenalectomy (affects A1c validity)",
+        ],
+        "closure_criteria": (
+            "A numeric A1c or GMI result documented in the measurement year. "
+            "Missing, unknown, or range results = poor control. "
+            "GMI from CGM is measure-compliant as of MY 2026."
+        ),
+        "drug_classes": [],
+        "icd_exclusion_codes": ["O24.4", "Z51.5"],
+        "notes": (
+            "PRIORITIZATION: Untested members (no A1c/GMI in MY) are the cheapest gap to close "
+            "and highest Stars leverage — one standing lab order closes the gap. "
+            "Therapeutic inertia bands: (a) untested → order lab, (b) A1c 8.5–9.0% trending up "
+            "→ intervention, (c) A1c >9.0% with recent encounter → titration, "
+            "(d) A1c >9.0% + no PCP in >180 days → re-engagement. "
+            "GSD is INVERSE and triple-weighted — every uncontrolled diabetic penalizes Stars 3x."
+        ),
+        "source": "NCQA HEDIS MY 2026 Technical Specifications",
+    },
+    "KED": {
+        "full_name": "Kidney Health Evaluation for Patients with Diabetes",
+        "numerator": (
+            "BOTH eGFR AND uACR (urine albumin-to-creatinine ratio) present in the measurement year. "
+            "eGFR alone = FAIL. uACR alone = FAIL. Both required."
+        ),
+        "denominator": "Members 18–85 with diabetes (same denominator logic as GSD).",
+        "pdc_threshold": None,
+        "measurement_period": "Measurement year (Jan 1 – Dec 31)",
+        "exclusions": [
+            "Hospice care",
+            "Frailty AND advanced illness",
+            "ESRD (bilateral nephrectomy or maintenance dialysis)",
+            "Kidney transplant recipients",
+        ],
+        "closure_criteria": (
+            "eGFR (LOINC 33914-3 or 50044-7) AND uACR (LOINC 14959-1 or 32294-1) "
+            "both documented in the measurement year."
+        ),
+        "drug_classes": [],
+        "icd_exclusion_codes": ["N18.6", "Z94.0", "Z51.5"],
+        "notes": (
+            "Clinical action beyond compliance: uACR-positive members (>30 mg/g) should be evaluated "
+            "for SGLT2i initiation — Class I evidence for renal protection: CREDENCE (canagliflozin), "
+            "DAPA-CKD (dapagliflozin), EMPA-KIDNEY (empagliflozin). "
+            "Most open KED gaps are eGFR-only — the fix is a standing uACR add-on to the next lab draw. "
+            "Mail-in urine kits (Healthy.io, Siemens) for members without upcoming encounters."
+        ),
+        "source": "NCQA HEDIS MY 2026 Technical Specifications",
+    },
+    "EED-E": {
+        "full_name": "Eye Exam for Patients with Diabetes (ECDS)",
+        "numerator": (
+            "Retinal or dilated eye exam by eye care professional (optometrist or ophthalmologist) "
+            "in the measurement year, OR a negative retinal exam (no retinopathy) in the prior year."
+        ),
+        "denominator": "Members 18–75 with diabetes.",
+        "pdc_threshold": None,
+        "measurement_period": "Measurement year + one-year lookback for negative exams",
+        "exclusions": [
+            "Bilateral eye enucleation",
+            "Hospice care",
+            "Frailty AND advanced illness",
+        ],
+        "closure_criteria": (
+            "Retinal exam by optometrist/ophthalmologist (CPT 92002, 92004, 92012, 92014, 92228, 92229), "
+            "fundus photography with professional interpretation, or teleophthalmology read. "
+            "Negative exam in the prior year satisfies the two-year window."
+        ),
+        "drug_classes": [],
+        "icd_exclusion_codes": ["Z96.1", "Z51.5"],
+        "notes": (
+            "Referral leakage is the modal failure mode — member agrees to referral and never completes. "
+            "Fix: in-office retinal imaging at PCP sites (Topcon NW400, IRIS) with teleophthalmology read. "
+            "Supplemental data pipeline required — retinal imaging in PCP offices often billed as E/M only, "
+            "missing from claims-based denominator."
+        ),
+        "source": "NCQA HEDIS MY 2026 Technical Specifications",
+    },
+    "SPD-E": {
+        "full_name": "Statin Therapy for Patients with Diabetes (ECDS)",
+        "numerator": (
+            "Two rates: "
+            "(a) Statin dispensing — at least one statin fill during the measurement year; "
+            "(b) Statin adherence — PDC >= 0.80 for statins during the measurement year."
+        ),
+        "denominator": "Members 40–75 with diabetes and NO ASCVD diagnosis.",
+        "pdc_threshold": 0.80,
+        "measurement_period": "Full measurement year — ECDS-only (MY 2026, hybrid retired)",
+        "exclusions": [
+            "ASCVD diagnosis (falls into SPC-E instead)",
+            "Hospice care",
+            "Frailty AND advanced illness",
+            "Myopathy or rhabdomyolysis (ICD-10 M62.82, M62.892)",
+            "Liver disease with elevated LFTs",
+        ],
+        "closure_criteria": (
+            "At least one statin dispensing event for rate (a). "
+            "PDC >= 0.80 for statin medications for rate (b). "
+            "90-day fills and mail-order conversion raise PDC 10–15 points."
+        ),
+        "drug_classes": ["statin"],
+        "icd_exclusion_codes": ["I21", "I22", "I25", "Z51.5", "M62.82"],
+        "notes": (
+            "Clinical rationale: diabetes is a CAD risk equivalent — moderate-to-high intensity statin "
+            "is guideline-concordant for nearly all diabetics 40–75 regardless of LDL "
+            "(HPS trial: 25% MACE reduction; CARDS: 37% reduction in first CV event). "
+            "Discontinuation: 40–50% of statin starts stop within one year. "
+            "Myalgia-triage: rechallenge with different statin or every-other-day dosing before stopping."
+        ),
+        "source": "NCQA HEDIS MY 2026 Technical Specifications",
+    },
+    "BPD-E": {
+        "full_name": "Blood Pressure Control for Patients with Diabetes (ECDS)",
+        "numerator": "Most recent BP reading < 140/90 mmHg during the measurement year.",
+        "denominator": "Members 18–85 with diabetes AND hypertension.",
+        "pdc_threshold": None,
+        "measurement_period": "Most recent BP reading in the measurement year",
+        "exclusions": [
+            "Hospice care",
+            "Frailty AND advanced illness",
+            "Pregnancy",
+            "Acute illness readings (sepsis, shock)",
+        ],
+        "closure_criteria": (
+            "Documented outpatient BP < 140 mmHg systolic AND < 90 mmHg diastolic. "
+            "RPM/home BP readings are measure-compliant via voluntary ECDS as of MY 2026."
+        ),
+        "drug_classes": ["ace_inhibitor", "arb", "thiazide", "ccb", "spironolactone"],
+        "icd_exclusion_codes": ["O10", "O11", "O13", "O14", "Z51.5"],
+        "notes": (
+            "Dominantly a data-capture problem: RPM and home BP readings often miss the HEDIS denominator "
+            "under admin reporting. MY 2026 ECDS option changes this — ingest RPM feeds "
+            "(Livongo/Teladoc, Omada, Withings). "
+            "HEDIS threshold <140/90 is the compliance floor; ADA 2024 clinical target is <130/80. "
+            "70%+ of diabetics are hypertensive — intensification to ACEi/ARB + thiazide or CCB "
+            "is the standard escalation for uncontrolled BP."
+        ),
+        "source": "NCQA HEDIS MY 2026 Technical Specifications",
+    },
 }
 
 
@@ -153,8 +318,11 @@ class MeasureCriteriaTool:
     name = "measure_criteria"
     description = (
         "Look up HEDIS measure specification and exclusion criteria (NCQA public specs). "
-        "Input: measure_id string (e.g., 'MAC', 'MAD', 'MAP', 'CBP', 'CDC-HbA1c', 'BCS', 'COL'). "
-        "Returns: numerator, denominator, exclusion criteria, closure requirements."
+        "Input: measure_id string. "
+        "Diabetes MY 2026: GSD (glycemic status, triple-weighted inverse), KED (kidney health — "
+        "eGFR+uACR both required), EED-E (eye exam), SPD-E (statin therapy), BPD-E (BP control). "
+        "General: MAC (statin adherence), MAD (diabetes meds adherence), MAP (RASA), CBP, BCS, COL. "
+        "Returns: numerator, denominator, exclusion criteria, closure requirements, clinical notes."
     )
 
     async def __call__(self, input: str) -> ToolResult:
@@ -163,6 +331,7 @@ class MeasureCriteriaTool:
 
             # Fuzzy match common aliases
             aliases = {
+                # General
                 "STATIN": "MAC", "CHOLESTEROL": "MAC",
                 "DIABETES-MED": "MAD", "ORAL-DIABETES": "MAD",
                 "HYPERTENSION-MED": "MAP", "ACE": "MAP", "ARB": "MAP",
@@ -170,6 +339,12 @@ class MeasureCriteriaTool:
                 "HBAIC": "CDC-HbA1c", "A1C": "CDC-HbA1c", "HEMOGLOBIN": "CDC-HbA1c",
                 "MAMMOGRAM": "BCS", "BREAST": "BCS",
                 "COLONOSCOPY": "COL", "COLORECTAL": "COL",
+                # Diabetes MY 2026
+                "GLYCEMIC": "GSD", "GLYCEMIC-STATUS": "GSD", "A1C-CONTROL": "GSD",
+                "KIDNEY": "KED", "KIDNEY-HEALTH": "KED", "EGFR": "KED", "UACR": "KED",
+                "EYE": "EED-E", "RETINAL": "EED-E", "EYE-EXAM": "EED-E", "EED": "EED-E",
+                "STATIN-DIABETES": "SPD-E", "SPD": "SPD-E",
+                "BP-DIABETES": "BPD-E", "BPD": "BPD-E",
             }
             measure_id = aliases.get(measure_id, measure_id)
 

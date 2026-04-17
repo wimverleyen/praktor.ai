@@ -256,4 +256,101 @@ HEDIS_MEASURES: dict[str, dict] = {
         "icd_relevant": [],
         "source": "NCQA HEDIS 2024",
     },
+    # ---------------------------------------------------------------------------
+    # Diabetes-specific measures (MY 2026) — from SKILL.md
+    # ---------------------------------------------------------------------------
+    "GSD": {
+        "name": "Glycemic Status Assessment for Patients with Diabetes",
+        "stars_weight": 3.0,   # triple-weighted, inverse-scored in MA Stars
+        "description": (
+            "Members 18–75 with diabetes. Reports three rates: A1c <8.0% (good control), "
+            "A1c <7.0% (tighter control subgroup), A1c >9.0% (poor control — INVERSE, "
+            "triple-weighted). Missing or unknown result = poor control."
+        ),
+        "threshold": None,
+        "closure_action": "scheduling_assist",
+        "drug_classes": [],
+        "icd_relevant": ["E11", "E10", "E13", "E11.9", "E11.65"],
+        "source": "NCQA HEDIS MY 2026 Technical Specifications",
+        "inverse_measure": True,
+        "notes": (
+            "GMI (Glucose Management Indicator) from CGM is an accepted numerator as of MY 2026. "
+            "Untested members auto-fail — highest closure leverage at lowest cost."
+        ),
+    },
+    "KED": {
+        "name": "Kidney Health Evaluation for Patients with Diabetes",
+        "stars_weight": 1.0,
+        "description": (
+            "Members 18–85 with diabetes. BOTH eGFR AND uACR required in the measurement year. "
+            "eGFR alone fails. uACR alone fails. Both tests must be present."
+        ),
+        "threshold": None,
+        "closure_action": "scheduling_assist",
+        "drug_classes": [],
+        "icd_relevant": ["E11", "E10", "E13"],
+        "source": "NCQA HEDIS MY 2026 Technical Specifications",
+        "notes": (
+            "uACR is the earliest marker of diabetic kidney disease. "
+            "SGLT2i initiation indicated for uACR-positive members (CREDENCE, DAPA-CKD, EMPA-KIDNEY). "
+            "Most open gaps are eGFR-only — standing uACR order closes them."
+        ),
+    },
+    "EED-E": {
+        "name": "Eye Exam for Patients with Diabetes (ECDS)",
+        "stars_weight": 1.0,
+        "description": (
+            "Members 18–75 with diabetes. Retinal or dilated eye exam by eye care professional "
+            "in the measurement year, OR negative exam (no retinopathy) in the prior year."
+        ),
+        "threshold": None,
+        "closure_action": "scheduling_assist",
+        "drug_classes": [],
+        "icd_relevant": ["E11", "E10", "E13"],
+        "source": "NCQA HEDIS MY 2026 Technical Specifications",
+        "notes": (
+            "Two-year window for negative exams reflects slow retinopathy progression. "
+            "Teleophthalmology and in-office retinal imaging (Topcon, IRIS) are measure-compliant. "
+            "Supplemental data pipeline from imaging vendors critical — claims miss 20-30% of exams."
+        ),
+    },
+    "SPD-E": {
+        "name": "Statin Therapy for Patients with Diabetes (ECDS)",
+        "stars_weight": 1.0,
+        "description": (
+            "Members 40–75 with diabetes and no ASCVD. Two rates: "
+            "(a) statin dispensing — at least one statin fill in MY; "
+            "(b) statin adherence — PDC >= 0.80. ECDS-only as of MY 2026."
+        ),
+        "threshold": 0.80,
+        "closure_action": "pharmacy_refill_reminder",
+        "drug_classes": ["statin"],
+        "icd_relevant": ["E11", "E10", "E13"],
+        "source": "NCQA HEDIS MY 2026 Technical Specifications",
+        "notes": (
+            "Diabetes is a CAD risk equivalent — statin is guideline-concordant for nearly all "
+            "diabetics 40–75 regardless of LDL (HPS, CARDS, ASCOT-LLA trials). "
+            "40-50% of statin starts discontinue within one year. "
+            "90-day fills and mail-order conversion raise PDC 10-15 points."
+        ),
+    },
+    "BPD-E": {
+        "name": "Blood Pressure Control for Patients with Diabetes (ECDS)",
+        "stars_weight": 1.0,
+        "description": (
+            "Members 18–85 with diabetes. Most recent BP reading < 140/90 mmHg in the MY. "
+            "Voluntary ECDS reporting added MY 2026."
+        ),
+        "threshold": None,
+        "closure_action": "scheduling_assist",
+        "drug_classes": ["ace_inhibitor", "arb", "thiazide", "ccb"],
+        "icd_relevant": ["E11", "E10", "E13", "I10"],
+        "source": "NCQA HEDIS MY 2026 Technical Specifications",
+        "notes": (
+            "Dominantly a data-capture problem. Home BP and RPM readings often never enter "
+            "the HEDIS denominator under admin reporting. ECDS from RPM platforms "
+            "(Livongo, Omada, Withings) is the MY 2026 unlock. "
+            "ADA 2024 clinical target <130/80 — HEDIS threshold <140/90 is the compliance floor."
+        ),
+    },
 }

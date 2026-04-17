@@ -8,6 +8,7 @@ Tabs:
   2. Member     — full member context: gaps, SDOH, outreach, labs
   3. Analytics  — closure rates, STARS impact projection, model performance
   4. Traces     — OTel trajectory waterfall: every ReAct step as a span
+  5. Diabetes   — MY 2026 diabetes HEDIS demo: inertia detection, gap-stacking, escalation
 
 Run:
     PYTHONPATH=praktor streamlit run praktor/ui/clinical_app.py
@@ -741,6 +742,144 @@ def tab_tracer():
 
 
 # ---------------------------------------------------------------------------
+# Diabetes HEDIS tab
+# ---------------------------------------------------------------------------
+
+_DIABETES_STORIES = {
+    "D001": {
+        "persona": "Maria Lopez",
+        "story": "Untested GSD — no A1c in MY 2026 (auto-fail, triple-weighted, inverse). One standing lab order closes the highest-Stars gap. Spanish-speaking, high SDOH.",
+        "demo_story": "untested_gsd_cheapest_close",
+        "gaps": ["GSD"],
+        "stars_exposure": 3.0,
+        "highlight": "Cheapest gap to close — 3x Stars leverage for zero-cost lab order.",
+    },
+    "D002": {
+        "persona": "James Chen",
+        "story": "A1c 8.7% trending up over 18 months on metformin+glipizide (therapeutic inertia). eGFR 52 (CKD 3a), uACR missing → KED gap. SGLT2i eligible (CREDENCE/EMPA-KIDNEY).",
+        "demo_story": "therapeutic_inertia_sglt2i",
+        "gaps": ["GSD", "KED"],
+        "stars_exposure": 4.0,
+        "highlight": "Clinical depth: inertia detection + SGLT2i/CREDENCE recommendation.",
+    },
+    "D003": {
+        "persona": "Patricia Williams",
+        "story": "Four open gaps: GSD + KED + SPD-E + EED-E. No A1c, no kidney labs, no statin, eye exam expired. One comprehensive PCP visit closes all four.",
+        "demo_story": "gap_stacking_four_measures",
+        "gaps": ["GSD", "KED", "SPD-E", "EED-E"],
+        "stars_exposure": 6.0,
+        "highlight": "Gap-stacking: 6x Stars exposure closed in one touchpoint.",
+    },
+}
+
+
+def tab_diabetes():
+    st.subheader("🩺 Diabetes HEDIS — MY 2026 Demo")
+    st.caption(
+        "Diabetes-specialist agent with therapeutic inertia detection, "
+        "treatment escalation, evidence anchors, and gap-stacking. "
+        "Three engineered members illustrate the key clinical reasoning capabilities."
+    )
+
+    # Measure reference
+    with st.expander("📋 MY 2026 Diabetes Measure Set", expanded=False):
+        measures = [
+            ("GSD", "Glycemic Status Assessment", "3x", "INVERSE — A1c >9.0% penalizes Stars 3x. Untested = auto-fail."),
+            ("KED", "Kidney Health Evaluation", "1x", "eGFR AND uACR BOTH required. eGFR-only = FAIL."),
+            ("EED-E", "Eye Exam (ECDS)", "1x", "Retinal/dilated exam by eye care professional."),
+            ("SPD-E", "Statin Therapy (ECDS-only)", "1x", "PDC ≥ 0.80 for statins. All T2D age 40–75 w/o ASCVD."),
+            ("BPD-E", "Blood Pressure Control (ECDS)", "1x", "Most recent BP <140/90. RPM now measure-compliant."),
+        ]
+        for mid, name, weight, note in measures:
+            col_a, col_b, col_c = st.columns([1, 3, 5])
+            col_a.markdown(f"**{mid}**")
+            col_b.markdown(name)
+            col_c.caption(f"{weight} STARS — {note}")
+
+    st.divider()
+    st.markdown("### Demo Members")
+
+    for raw_id, info in _DIABETES_STORIES.items():
+        with st.container(border=True):
+            c1, c2 = st.columns([2, 3])
+            with c1:
+                st.markdown(f"**{raw_id} — {info['persona']}**")
+                gaps_str = "  ".join(f"`{g}`" for g in info["gaps"])
+                st.markdown(f"Gaps: {gaps_str}")
+                stars_color = "green" if info["stars_exposure"] >= 5 else "orange" if info["stars_exposure"] >= 3 else "gray"
+                st.markdown(
+                    f"Stars exposure: :{stars_color}[**{info['stars_exposure']:.0f}x**]"
+                )
+            with c2:
+                st.markdown(info["story"])
+                st.caption(f"💡 {info['highlight']}")
+
+    st.divider()
+
+    # Run demo section
+    st.markdown("### Run Agent")
+
+    col_m, col_member, col_btn = st.columns([2, 2, 2])
+    with col_m:
+        model = st.text_input("LLM model", value="llama3:8b", key="dm_model")
+    with col_member:
+        member_opts = {"All members (D001, D002, D003)": None, "D001 — Maria Lopez": 0,
+                       "D002 — James Chen": 1, "D003 — Patricia Williams": 2}
+        selected_member = st.selectbox("Member", list(member_opts.keys()), key="dm_member")
+    with col_btn:
+        st.write("")
+        dry_run = st.checkbox("Dry run (no LLM)", value=True, key="dm_dry_run")
+
+    if st.button("▶ Run diabetes HEDIS agent", key="dm_run_btn", use_container_width=True):
+        member_idx = member_opts[selected_member]
+
+        with st.spinner("Running diabetes HEDIS agent…"):
+            import subprocess
+            cmd = [
+                "python", "scripts/demo_diabetes_agent.py",
+                "--model", model,
+            ]
+            if dry_run:
+                cmd.append("--dry-run")
+            if member_idx is not None:
+                cmd += ["--member", str(member_idx)]
+
+            env = dict(**os.environ, PYTHONPATH="praktor")
+            result = subprocess.run(
+                cmd,
+                capture_output=True, text=True,
+                env=env,
+                cwd=str(_REPO_ROOT),
+            )
+
+        if result.returncode == 0:
+            st.success("Agent run complete.")
+            # Strip ANSI for display
+            import re as _re
+            ansi_escape = _re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+            clean = ansi_escape.sub("", result.stdout)
+            st.code(clean, language="text")
+        else:
+            st.error("Agent run failed.")
+            st.code(result.stderr or result.stdout, language="text")
+
+    st.divider()
+    st.markdown("### Escalation Ladder (ADA 2024)")
+    steps = [
+        ("Step 1", "Metformin monotherapy", "First-line for T2D. Reduces A1c ~1.5–2.0%."),
+        ("Step 2", "Add GLP-1 RA", "BMI ≥27 or CV benefit needed (Ozempic, Trulicity). A1c reduction ~1.0–1.5%."),
+        ("Step 3", "Add SGLT2i", "CKD (eGFR 20–60 + uACR >200) or HFrEF. CREDENCE, EMPA-KIDNEY, DAPA-CKD."),
+        ("Step 4", "Basal insulin", "A1c >10% on dual therapy. Titrate to fasting glucose 80–130 mg/dL."),
+        ("Step 5", "Basal-bolus insulin", "A1c >9% on optimized basal. Consider endocrinology referral."),
+    ]
+    for step, name, detail in steps:
+        c1, c2, c3 = st.columns([1, 2, 4])
+        c1.caption(step)
+        c2.markdown(f"**{name}**")
+        c3.caption(detail)
+
+
+# ---------------------------------------------------------------------------
 # Sidebar
 # ---------------------------------------------------------------------------
 
@@ -762,6 +901,9 @@ def _sidebar():
         st.markdown("**Quick start:**")
         st.code("python scripts/init_member_brain.py \\\n  --seed-demo", language="bash")
         st.code("python scripts/demo_hedis_agent.py \\\n  --dry-run", language="bash")
+        st.divider()
+        st.markdown("**Diabetes demo (MY 2026):**")
+        st.code("python scripts/demo_diabetes_agent.py \\\n  --dry-run", language="bash")
 
         st.divider()
         st.caption("**STARS triple-weighted measures:**")
@@ -780,7 +922,9 @@ def main():
     st.title("🏥 praktor.ai Clinical")
     st.caption("HEDIS Gap Closure · Clinical Reasoning · Karpathy Second Brain")
 
-    tab1, tab2, tab3, tab4 = st.tabs(["📋 Queue", "👤 Member", "📊 Analytics", "🔍 Traces"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(
+        ["📋 Queue", "👤 Member", "📊 Analytics", "🔍 Traces", "🩺 Diabetes"]
+    )
 
     with tab1:
         tab_queue()
@@ -793,6 +937,9 @@ def main():
 
     with tab4:
         tab_tracer()
+
+    with tab5:
+        tab_diabetes()
 
 
 if __name__ == "__main__":
