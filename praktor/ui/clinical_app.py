@@ -9,6 +9,7 @@ Tabs:
   3. Analytics  — closure rates, STARS impact projection, model performance
   4. Traces     — OTel trajectory waterfall: every ReAct step as a span
   5. Diabetes   — MY 2026 diabetes HEDIS demo: inertia detection, gap-stacking, escalation
+  6. Judge      — LLM judge scores: 5 base dimensions + domain extensions, on-demand eval
 
 Run:
     PYTHONPATH=praktor streamlit run praktor/ui/clinical_app.py
@@ -913,6 +914,368 @@ def _sidebar():
 
 
 # ---------------------------------------------------------------------------
+# Judge evaluation tab
+# ---------------------------------------------------------------------------
+
+_BASE_CRITERIA = ["accuracy", "completeness", "relevance", "conciseness", "clarity"]
+_HEDIS_CRITERIA = ["gap_identification_accuracy", "action_appropriateness",
+                   "evidence_citation_quality", "safety_flag_coverage"]
+_DIABETES_CRITERIA = ["inertia_detection_accuracy", "escalation_ladder_correctness",
+                      "gap_stacking_completeness", "evidence_anchor_quality",
+                      "safety_exclusion_coverage"]
+
+_CRITERION_LABELS = {
+    "accuracy": "Accuracy",
+    "completeness": "Completeness",
+    "relevance": "Relevance",
+    "conciseness": "Conciseness",
+    "clarity": "Clarity",
+    "gap_identification_accuracy": "Gap ID",
+    "action_appropriateness": "Action Fit",
+    "evidence_citation_quality": "Evidence",
+    "safety_flag_coverage": "Safety",
+    "inertia_detection_accuracy": "Inertia",
+    "escalation_ladder_correctness": "Escalation",
+    "gap_stacking_completeness": "Gap Stack",
+    "evidence_anchor_quality": "Evidence Anchor",
+    "safety_exclusion_coverage": "Exclusions",
+}
+
+
+def _score_color(score: float | None) -> str:
+    if score is None:
+        return "gray"
+    if score >= 7.5:
+        return "green"
+    if score >= 5.0:
+        return "orange"
+    return "red"
+
+
+def _score_bar(score: float | None, max_width: int = 100) -> str:
+    """HTML progress bar string for a score."""
+    if score is None:
+        return "—"
+    pct = int((score / 10.0) * max_width)
+    color = "#5cb85c" if score >= 7.5 else "#f0ad4e" if score >= 5.0 else "#d9534f"
+    return f'<div style="background:{color};width:{pct}%;height:10px;border-radius:3px"></div>'
+
+
+def _load_judge_evals(hours: float = 168, agent: str | None = None,
+                      judge_type: str | None = None, limit: int = 200) -> list[dict]:
+    """Read judge_evals from monitoring.db."""
+    import sqlite3, time as _time
+    db_path = os.getenv("PRAKTOR_MONITORING_DB",
+                        str(Path.home() / ".praktor" / "monitoring.db"))
+    if not Path(db_path).exists():
+        return []
+    try:
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        since = _time.time() - hours * 3600
+        clauses = ["timestamp >= ?"]
+        params: list = [since]
+        if agent:
+            clauses.append("agent_type = ?")
+            params.append(agent)
+        if judge_type:
+            clauses.append("judge_type = ?")
+            params.append(judge_type)
+        where = " AND ".join(clauses)
+        rows = conn.execute(
+            f"SELECT * FROM judge_evals WHERE {where} ORDER BY timestamp DESC LIMIT ?",
+            params + [limit],
+        ).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+    except Exception:
+        return []
+
+
+def _judge_distinct_agents() -> list[str]:
+    db_path = os.getenv("PRAKTOR_MONITORING_DB",
+                        str(Path.home() / ".praktor" / "monitoring.db"))
+    if not Path(db_path).exists():
+        return []
+    try:
+        import sqlite3
+        conn = sqlite3.connect(db_path)
+        rows = conn.execute(
+            "SELECT DISTINCT agent_type FROM judge_evals ORDER BY agent_type"
+        ).fetchall()
+        conn.close()
+        return [r[0] for r in rows]
+    except Exception:
+        return []
+
+
+def _render_criteria_row(row: dict, criteria: list[str], label: str) -> None:
+    """Render a single evaluation row with per-criterion score chips."""
+    cols = st.columns([2] + [1] * len(criteria) + [2])
+    cols[0].caption(label)
+    for i, crit in enumerate(criteria):
+        val = row.get(crit)
+        color = _score_color(val)
+        display = f":{color}[**{val:.1f}**]" if val is not None else ":gray[—]"
+        cols[i + 1].markdown(display)
+    cols[-1].caption(row.get("reasoning", "")[:80])
+
+
+def tab_judge():
+    st.subheader("⚖️ LLM Judge — Performance Evaluation")
+    st.caption(
+        "5 base performance dimensions scored for every agent. "
+        "Clinical and diabetes agents add domain-specific criteria on top."
+    )
+
+    # Dimension reference
+    with st.expander("📐 Evaluation Dimensions", expanded=False):
+        st.markdown("**Base (all agents)**")
+        base_cols = st.columns(5)
+        descs = {
+            "accuracy": "Is the answer correct?",
+            "completeness": "Is required info included?",
+            "relevance": "Does it address the question?",
+            "conciseness": "Is it appropriately brief?",
+            "clarity": "Is it clear and easy to understand?",
+        }
+        for col, crit in zip(base_cols, _BASE_CRITERIA):
+            col.metric(_CRITERION_LABELS[crit], "0–10")
+            col.caption(descs[crit])
+
+        st.markdown("**HEDIS clinical extensions** (`hedis_gap` agent)")
+        h_cols = st.columns(4)
+        h_descs = {
+            "gap_identification_accuracy": "Right gap, right reason",
+            "action_appropriateness": "Right action for this member",
+            "evidence_citation_quality": "Grounded in member record",
+            "safety_flag_coverage": "Exclusions + contraindications",
+        }
+        for col, crit in zip(h_cols, _HEDIS_CRITERIA):
+            col.metric(_CRITERION_LABELS[crit], "0–10")
+            col.caption(h_descs[crit])
+
+        st.markdown("**Diabetes extensions** (`diabetes_hedis` agent)")
+        d_cols = st.columns(5)
+        d_descs = {
+            "inertia_detection_accuracy": "Inertia correctly flagged?",
+            "escalation_ladder_correctness": "Right ADA 2024 step?",
+            "gap_stacking_completeness": "All closable gaps found?",
+            "evidence_anchor_quality": "CREDENCE/UKPDS/CARDS cited?",
+            "safety_exclusion_coverage": "ESRD/hospice/ASCVD checked?",
+        }
+        for col, crit in zip(d_cols, _DIABETES_CRITERIA):
+            col.metric(_CRITERION_LABELS[crit], "0–10")
+            col.caption(d_descs[crit])
+
+    st.divider()
+
+    # Filters
+    col_h, col_a, col_j, col_lim, col_ref = st.columns([1, 2, 2, 1, 1])
+    with col_h:
+        hours = st.selectbox("Window", [1, 6, 24, 168, 720], index=2,
+                             format_func=lambda h: f"{h}h", key="judge_hours")
+    with col_a:
+        agents = _judge_distinct_agents()
+        agent_opts = ["All agents"] + agents
+        sel_agent = st.selectbox("Agent", agent_opts, key="judge_agent")
+        agent_filter = None if sel_agent == "All agents" else sel_agent
+    with col_j:
+        jtype_opts = ["All types", "general", "hedis", "diabetes_hedis"]
+        sel_jtype = st.selectbox("Judge type", jtype_opts, key="judge_type")
+        jtype_filter = None if sel_jtype == "All types" else sel_jtype
+    with col_lim:
+        limit = st.number_input("Rows", min_value=10, max_value=500, value=100,
+                                step=10, key="judge_limit")
+    with col_ref:
+        st.write("")
+        if st.button("Refresh", key="judge_refresh", use_container_width=True):
+            st.cache_data.clear()
+
+    evals = _load_judge_evals(float(hours), agent_filter, jtype_filter, int(limit))
+
+    if not evals:
+        st.info(
+            "No judge evaluations in the store yet.\n\n"
+            "Run the demo, then use the on-demand panel below to score a response."
+        )
+    else:
+        # Summary metrics
+        base_scores = [
+            sum(r.get(c) or 0 for c in _BASE_CRITERIA) / len(_BASE_CRITERIA)
+            for r in evals if any(r.get(c) is not None for c in _BASE_CRITERIA)
+        ]
+        overall_scores = [r["score"] for r in evals]
+        hedis_evals = [r for r in evals if r.get("judge_type") == "hedis"]
+        dm_evals = [r for r in evals if r.get("judge_type") == "diabetes_hedis"]
+
+        m1, m2, m3, m4, m5 = st.columns(5)
+        m1.metric("Total evals", len(evals))
+        m2.metric("Avg overall", f"{sum(overall_scores)/len(overall_scores):.1f}/10"
+                  if overall_scores else "—")
+        m3.metric("Avg base score", f"{sum(base_scores)/len(base_scores):.1f}/10"
+                  if base_scores else "—")
+        m4.metric("HEDIS evals", len(hedis_evals))
+        m5.metric("Diabetes evals", len(dm_evals))
+
+        st.divider()
+
+        # Per-agent heatmap
+        if len(set(r["agent_type"] for r in evals)) > 1 or not agent_filter:
+            st.markdown("### Per-agent average scores")
+            agent_groups: dict[str, list[dict]] = {}
+            for r in evals:
+                agent_groups.setdefault(r["agent_type"], []).append(r)
+
+            # Header row
+            header_cols = st.columns([2] + [1] * len(_BASE_CRITERIA))
+            header_cols[0].markdown("**Agent**")
+            for i, crit in enumerate(_BASE_CRITERIA):
+                header_cols[i + 1].markdown(f"**{_CRITERION_LABELS[crit]}**")
+
+            for agent_name, rows in sorted(agent_groups.items()):
+                avg_cols = st.columns([2] + [1] * len(_BASE_CRITERIA))
+                avg_cols[0].markdown(f"`{agent_name}`  ({len(rows)} evals)")
+                for i, crit in enumerate(_BASE_CRITERIA):
+                    vals = [r.get(crit) for r in rows if r.get(crit) is not None]
+                    avg = sum(vals) / len(vals) if vals else None
+                    color = _score_color(avg)
+                    avg_cols[i + 1].markdown(
+                        f":{color}[**{avg:.1f}**]" if avg is not None else ":gray[—]"
+                    )
+
+            st.divider()
+
+        # Evaluation log
+        st.markdown(f"### Evaluation log ({len(evals)} entries)")
+        for i, row in enumerate(evals):
+            from datetime import datetime
+            ts = datetime.fromtimestamp(row["timestamp"]).strftime("%m-%d %H:%M")
+            jtype = row.get("judge_type", "general")
+            overall = row.get("score", 0)
+            color = _score_color(overall)
+            label = (
+                f":{color}[**{overall:.1f}**] "
+                f"`{row['agent_type']}` · `{jtype}` · {ts}"
+            )
+
+            with st.expander(label, expanded=(i == 0)):
+                # Base criteria
+                st.markdown("**Base performance dimensions**")
+                base_cols = st.columns(len(_BASE_CRITERIA))
+                for col, crit in zip(base_cols, _BASE_CRITERIA):
+                    val = row.get(crit)
+                    c = _score_color(val)
+                    col.metric(_CRITERION_LABELS[crit],
+                               f"{val:.1f}" if val is not None else "—",
+                               delta=None)
+
+                # Domain extensions
+                ext_criteria = []
+                if jtype == "hedis":
+                    ext_criteria = _HEDIS_CRITERIA
+                    st.markdown("**HEDIS clinical extensions**")
+                elif jtype == "diabetes_hedis":
+                    ext_criteria = _DIABETES_CRITERIA
+                    st.markdown("**Diabetes extensions**")
+
+                if ext_criteria:
+                    ext_cols = st.columns(len(ext_criteria))
+                    for col, crit in zip(ext_cols, ext_criteria):
+                        val = row.get(crit)
+                        col.metric(_CRITERION_LABELS[crit],
+                                   f"{val:.1f}" if val is not None else "—")
+
+                if row.get("reasoning"):
+                    st.caption(f"Reasoning: {row['reasoning']}")
+                if row.get("question"):
+                    st.caption(f"Input: {row['question'][:200]}")
+
+    # ---------------------------------------------------------------------------
+    # On-demand evaluation panel
+    # ---------------------------------------------------------------------------
+    st.divider()
+    st.markdown("### On-demand evaluation")
+    st.caption("Paste any agent response to score it immediately with the LLM judge.")
+
+    with st.form("judge_eval_form"):
+        col_at, col_jt = st.columns(2)
+        with col_at:
+            eval_agent = st.selectbox(
+                "Agent type",
+                ["hedis_gap", "diabetes_hedis", "general"],
+                key="eval_agent_type",
+            )
+        with col_jt:
+            eval_model = st.text_input("Judge model", value="llama3:8b", key="eval_model")
+
+        eval_question = st.text_area("Question / task prompt", height=80,
+                                     placeholder="What should the care manager do for member X?",
+                                     key="eval_question")
+        eval_response = st.text_area("Agent response to evaluate", height=200,
+                                     placeholder="ACTION_TYPE: pcp_warm_outreach\nRATIONALE: ...",
+                                     key="eval_response")
+        eval_context = st.text_area("Member context (optional, de-identified)", height=80,
+                                    placeholder="Member has GSD open, A1c 8.7%, eGFR 52...",
+                                    key="eval_context")
+        submitted = st.form_submit_button("▶ Run judge evaluation")
+
+    if submitted and eval_response.strip():
+        with st.spinner("Running LLM judge..."):
+            try:
+                async def _run_judge():
+                    if eval_agent == "diabetes_hedis":
+                        from clinical.evaluation.diabetes_hedis_judge import DiabetesHEDISJudge
+                        j = DiabetesHEDISJudge(model=eval_model)
+                        return await j.evaluate(eval_response, eval_context or "(none)")
+                    elif eval_agent == "hedis_gap":
+                        from clinical.evaluation.hedis_judge import HEDISJudge
+                        j = HEDISJudge(model=eval_model)
+                        return await j.evaluate(eval_response, eval_context or "(none)")
+                    else:
+                        from core.judge import JudgeEvaluator
+                        j = JudgeEvaluator(model=eval_model)
+                        return await j.evaluate(eval_question, eval_response)
+
+                result = _run_async(_run_judge())
+
+                st.success("Evaluation complete")
+                st.metric("Overall score", f"{result.overall:.1f}/10")
+
+                # Base criteria
+                st.markdown("**Base performance dimensions**")
+                b_cols = st.columns(5)
+                for col, crit in zip(b_cols, _BASE_CRITERIA):
+                    val = (result.criteria.get(crit)
+                           if hasattr(result, "criteria")
+                           else getattr(result, crit, None))
+                    col.metric(_CRITERION_LABELS[crit],
+                               f"{val:.1f}" if val is not None else "—")
+
+                # Domain extensions
+                if eval_agent == "hedis_gap":
+                    st.markdown("**HEDIS clinical extensions**")
+                    h_cols = st.columns(4)
+                    for col, crit in zip(h_cols, _HEDIS_CRITERIA):
+                        val = getattr(result, crit, None)
+                        col.metric(_CRITERION_LABELS[crit],
+                                   f"{val:.1f}" if val is not None else "—")
+                elif eval_agent == "diabetes_hedis":
+                    st.markdown("**Diabetes extensions**")
+                    d_cols = st.columns(5)
+                    for col, crit in zip(d_cols, _DIABETES_CRITERIA):
+                        val = getattr(result, crit, None)
+                        col.metric(_CRITERION_LABELS[crit],
+                                   f"{val:.1f}" if val is not None else "—")
+
+                st.caption(f"Reasoning: {result.reasoning}")
+
+            except Exception as e:
+                st.error(f"Judge evaluation failed: {e}")
+                st.caption("Ensure the LLM model is running (Ollama) or ANTHROPIC_API_KEY is set.")
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -922,8 +1285,8 @@ def main():
     st.title("🏥 praktor.ai Clinical")
     st.caption("HEDIS Gap Closure · Clinical Reasoning · Karpathy Second Brain")
 
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(
-        ["📋 Queue", "👤 Member", "📊 Analytics", "🔍 Traces", "🩺 Diabetes"]
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(
+        ["📋 Queue", "👤 Member", "📊 Analytics", "🔍 Traces", "🩺 Diabetes", "⚖️ Judge"]
     )
 
     with tab1:
@@ -940,6 +1303,9 @@ def main():
 
     with tab5:
         tab_diabetes()
+
+    with tab6:
+        tab_judge()
 
 
 if __name__ == "__main__":

@@ -50,17 +50,19 @@ REFERENCE ANSWER (may be empty):
 {expected}
 
 Score the response on each criterion from 0.0 to 10.0:
-- relevance:    Does the response directly address the question?
 - accuracy:     Is the content factually correct and logically sound?
 - completeness: Are all key points covered without major gaps?
+- relevance:    Does the response directly address the question asked?
 - conciseness:  Is the response appropriately brief without unnecessary padding?
+- clarity:      Is the response clear and easy to understand? Well-structured, plain language.
 
 Reply ONLY with a JSON object — no prose, no markdown fences:
 {{
-  "relevance": <float>,
   "accuracy": <float>,
   "completeness": <float>,
+  "relevance": <float>,
   "conciseness": <float>,
+  "clarity": <float>,
   "reasoning": "<one sentence explaining the scores>"
 }}"""
 
@@ -91,10 +93,10 @@ Decide which response is better overall. Reply ONLY with a JSON object:
 
 @dataclass
 class JudgeScore:
-    """Evaluation result for a single response."""
-    score: float                   # mean of four criteria (0–10)
+    """Evaluation result for a single response — 5 base performance dimensions."""
+    score: float                   # mean of five criteria (0–10)
     reasoning: str
-    criteria: dict[str, float]     # {"relevance": x, "accuracy": x, ...}
+    criteria: dict[str, float]     # {"accuracy": x, "completeness": x, ...}
     question: str = ""
     response: str = ""
 
@@ -102,10 +104,11 @@ class JudgeScore:
         c = self.criteria
         return (
             f"overall={self.score:.1f}/10  "
-            f"rel={c.get('relevance', 0):.1f}  "
             f"acc={c.get('accuracy', 0):.1f}  "
             f"cmp={c.get('completeness', 0):.1f}  "
+            f"rel={c.get('relevance', 0):.1f}  "
             f"con={c.get('conciseness', 0):.1f}  "
+            f"cla={c.get('clarity', 0):.1f}  "
             f"| {self.reasoning[:80]}"
         )
 
@@ -126,7 +129,8 @@ class JudgeEvaluator:
         temperature: Judge LLM temperature (default 0.0 for determinism)
     """
 
-    _CRITERIA = ("relevance", "accuracy", "completeness", "conciseness")
+    # 5 base performance dimensions — always evaluated for every agent
+    _CRITERIA = ("accuracy", "completeness", "relevance", "conciseness", "clarity")
 
     def __init__(
         self,

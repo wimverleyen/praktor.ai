@@ -138,33 +138,70 @@ class NextBestAction:
 
 @dataclass
 class ClinicalJudgeScore:
-    """4-criterion quality score for a NextBestAction recommendation."""
+    """
+    9-criterion quality score for a HEDIS NextBestAction recommendation.
+
+    5 base performance dimensions (shared with all agents):
+      accuracy, completeness, relevance, conciseness, clarity
+
+    4 clinical extensions (HEDIS-specific):
+      gap_identification_accuracy, action_appropriateness,
+      evidence_citation_quality, safety_flag_coverage
+    """
 
     recommendation_id: str
-    gap_identification_accuracy: float   # 0–10: right gap, right reason
-    action_appropriateness: float        # 0–10: right action for this member
-    evidence_citation_quality: float     # 0–10: reasoning grounded in record
-    safety_flag_coverage: float          # 0–10: exclusions + contraindications checked
+    # --- 5 base performance dimensions ---
+    accuracy: float = 5.0            # 0–10: factually correct
+    completeness: float = 5.0        # 0–10: all required info present
+    relevance: float = 5.0           # 0–10: addresses the question
+    conciseness: float = 5.0         # 0–10: appropriately brief
+    clarity: float = 5.0             # 0–10: clear and easy to understand
+    # --- 4 clinical extensions ---
+    gap_identification_accuracy: float = 5.0  # 0–10: right gap, right reason
+    action_appropriateness: float = 5.0       # 0–10: right action for this member
+    evidence_citation_quality: float = 5.0    # 0–10: reasoning grounded in record
+    safety_flag_coverage: float = 5.0         # 0–10: exclusions + contraindications
     reasoning: str = ""
-    outcome: str | None = None           # "closed" | "not_closed" | "pending"
+    outcome: str | None = None       # "closed" | "not_closed" | "pending"
+
+    @property
+    def base_overall(self) -> float:
+        """Mean of the 5 base dimensions."""
+        return round(
+            (self.accuracy + self.completeness + self.relevance
+             + self.conciseness + self.clarity) / 5.0,
+            2,
+        )
+
+    @property
+    def clinical_overall(self) -> float:
+        """Mean of the 4 clinical extension dimensions."""
+        return round(
+            (self.gap_identification_accuracy + self.action_appropriateness
+             + self.evidence_citation_quality + self.safety_flag_coverage) / 4.0,
+            2,
+        )
 
     @property
     def overall(self) -> float:
+        """Mean across all 9 criteria."""
         return round(
-            (self.gap_identification_accuracy
-             + self.action_appropriateness
-             + self.evidence_citation_quality
-             + self.safety_flag_coverage) / 4.0,
+            (self.accuracy + self.completeness + self.relevance + self.conciseness
+             + self.clarity + self.gap_identification_accuracy
+             + self.action_appropriateness + self.evidence_citation_quality
+             + self.safety_flag_coverage) / 9.0,
             2,
         )
 
     def summary(self) -> str:
         return (
             f"overall={self.overall:.1f}/10  "
-            f"gap_id={self.gap_identification_accuracy:.1f}  "
-            f"action={self.action_appropriateness:.1f}  "
-            f"evidence={self.evidence_citation_quality:.1f}  "
-            f"safety={self.safety_flag_coverage:.1f}"
+            f"[base: acc={self.accuracy:.1f} cmp={self.completeness:.1f} "
+            f"rel={self.relevance:.1f} con={self.conciseness:.1f} cla={self.clarity:.1f}]  "
+            f"[clinical: gap_id={self.gap_identification_accuracy:.1f} "
+            f"action={self.action_appropriateness:.1f} "
+            f"evidence={self.evidence_citation_quality:.1f} "
+            f"safety={self.safety_flag_coverage:.1f}]"
         )
 
 

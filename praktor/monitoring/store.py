@@ -76,12 +76,26 @@ CREATE TABLE IF NOT EXISTS judge_evals (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id      TEXT    NOT NULL,
     agent_type      TEXT    NOT NULL,
+    judge_type      TEXT    DEFAULT 'general',
     version_id      TEXT,
     score           REAL    NOT NULL,
-    relevance       REAL,
+    -- 5 base performance dimensions (all agents)
     accuracy        REAL,
     completeness    REAL,
+    relevance       REAL,
     conciseness     REAL,
+    clarity         REAL,
+    -- HEDIS clinical extensions (hedis_gap agent)
+    gap_identification_accuracy REAL,
+    action_appropriateness      REAL,
+    evidence_citation_quality   REAL,
+    safety_flag_coverage        REAL,
+    -- Diabetes extensions (diabetes_hedis agent)
+    inertia_detection_accuracy     REAL,
+    escalation_ladder_correctness  REAL,
+    gap_stacking_completeness      REAL,
+    evidence_anchor_quality        REAL,
+    safety_exclusion_coverage      REAL,
     reasoning       TEXT,
     question        TEXT,
     timestamp       REAL    NOT NULL
@@ -129,16 +143,35 @@ class RunRecord:
 
 @dataclass
 class JudgeEvalRecord:
-    """One LLM-as-judge evaluation result."""
+    """
+    One LLM-as-judge evaluation result.
+
+    Always carries the 5 base performance dimensions.
+    Clinical/domain extension fields are None for non-clinical agents.
+    """
     session_id: str
     agent_type: str
     score: float
     timestamp: float
+    judge_type: str = "general"      # "general" | "hedis" | "diabetes_hedis"
     version_id: str | None = None
-    relevance: float | None = None
+    # 5 base performance dimensions
     accuracy: float | None = None
     completeness: float | None = None
+    relevance: float | None = None
     conciseness: float | None = None
+    clarity: float | None = None
+    # HEDIS clinical extensions
+    gap_identification_accuracy: float | None = None
+    action_appropriateness: float | None = None
+    evidence_citation_quality: float | None = None
+    safety_flag_coverage: float | None = None
+    # Diabetes extensions
+    inertia_detection_accuracy: float | None = None
+    escalation_ladder_correctness: float | None = None
+    gap_stacking_completeness: float | None = None
+    evidence_anchor_quality: float | None = None
+    safety_exclusion_coverage: float | None = None
     reasoning: str = ""
     question: str = ""
 
@@ -234,14 +267,25 @@ class MonitoringStore:
         with self._connect() as conn:
             conn.execute(
                 """INSERT INTO judge_evals
-                   (session_id, agent_type, version_id, score,
-                    relevance, accuracy, completeness, conciseness,
+                   (session_id, agent_type, judge_type, version_id, score,
+                    accuracy, completeness, relevance, conciseness, clarity,
+                    gap_identification_accuracy, action_appropriateness,
+                    evidence_citation_quality, safety_flag_coverage,
+                    inertia_detection_accuracy, escalation_ladder_correctness,
+                    gap_stacking_completeness, evidence_anchor_quality,
+                    safety_exclusion_coverage,
                     reasoning, question, timestamp)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
-                    record.session_id, record.agent_type, record.version_id,
-                    record.score, record.relevance, record.accuracy,
-                    record.completeness, record.conciseness,
+                    record.session_id, record.agent_type, record.judge_type,
+                    record.version_id, record.score,
+                    record.accuracy, record.completeness, record.relevance,
+                    record.conciseness, record.clarity,
+                    record.gap_identification_accuracy, record.action_appropriateness,
+                    record.evidence_citation_quality, record.safety_flag_coverage,
+                    record.inertia_detection_accuracy, record.escalation_ladder_correctness,
+                    record.gap_stacking_completeness, record.evidence_anchor_quality,
+                    record.safety_exclusion_coverage,
                     record.reasoning, record.question, record.timestamp,
                 ),
             )
