@@ -124,8 +124,18 @@ class ClosureTracker:
                 (outcome, time.time(), rec_id),
             )
 
+    def get_review_queue(self, limit: int = 200) -> list[dict]:
+        """Recommendations awaiting care manager review (care_mgr_action='pending')."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM recommendations WHERE care_mgr_action='pending' "
+                "ORDER BY priority_score DESC, created_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
     def get_pending(self, days_threshold: int = 30) -> list[dict]:
-        """Recommendations awaiting outcome resolution."""
+        """Recommendations awaiting outcome resolution (already approved, outcome TBD)."""
         cutoff = time.time() - days_threshold * 86400
         with self._connect() as conn:
             rows = conn.execute(

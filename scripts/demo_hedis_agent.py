@@ -199,6 +199,14 @@ async def run_member(
 
     action = parse_next_best_action(full_response, member_hash)
     _print_action(action)
+
+    try:
+        from clinical.evaluation.closure_tracker import get_tracker
+        rec_id = get_tracker().record_recommendation(action)
+        print(f"  {_DIM}Saved to review queue (id={rec_id}){_RESET}")
+    except Exception as e:
+        print(f"  {_DIM}Warning: could not save to tracker: {e}{_RESET}")
+
     return action
 
 

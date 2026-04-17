@@ -493,3 +493,129 @@ class TestMonitoringCLI:
         assert result.returncode == 0, result.stderr
         dashboard = json.loads(result.stdout)
         assert dashboard["uid"] == "praktor-monitoring"
+
+
+# ===========================================================================
+# ClosureTracker.get_review_queue
+# ===========================================================================
+
+class TestClosureTrackerReviewQueue:
+
+    def _make_tracker(self, tmp_path):
+        from clinical.evaluation.closure_tracker import ClosureTracker
+        return ClosureTracker(db_path=str(tmp_path / "test_closure.db"))
+
+    def _insert_rec(self, tracker, priority: float, measure_id: str = "GSD",
+                    action: str = "pending") -> int:
+        rec = {
+            "member_id_hash": "test-hash-001",
+            "measure_id": measure_id,
+            "action_type": "pcp_warm_outreach",
+            "priority_score": priority,
+            "closure_probability": 0.7,
+            "rationale": "test",
+            "draft_content": "",
+            "language": "en",
+            "span_id": None,
+        }
+        rec_id = tracker.record_recommendation(rec)
+        if action != "pending":
+            tracker.record_care_mgr_action(rec_id, action)
+        return rec_id
+
+    def test_returns_pending_recs_only(self, tmp_path):
+        tracker = self._make_tracker(tmp_path)
+        self._insert_rec(tracker, priority=0.9, action="pending")
+        self._insert_rec(tracker, priority=0.5, action="approved")
+        queue = tracker.get_review_queue()
+        assert len(queue) == 1
+        assert queue[0]["priority_score"] == pytest.approx(0.9)
+
+    def test_ordered_by_priority_desc(self, tmp_path):
+        tracker = self._make_tracker(tmp_path)
+        self._insert_rec(tracker, priority=0.3)
+        self._insert_rec(tracker, priority=0.9)
+        self._insert_rec(tracker, priority=0.6)
+        queue = tracker.get_review_queue()
+        scores = [r["priority_score"] for r in queue]
+        assert scores == sorted(scores, reverse=True)
+
+    def test_limit_respected(self, tmp_path):
+        tracker = self._make_tracker(tmp_path)
+        for i in range(5):
+            self._insert_rec(tracker, priority=float(i) / 10)
+        queue = tracker.get_review_queue(limit=3)
+        assert len(queue) == 3
+
+    def test_empty_db_returns_empty_list(self, tmp_path):
+        tracker = self._make_tracker(tmp_path)
+        assert tracker.get_review_queue() == []
+
+
+# ===========================================================================
+# collector._score_field and _overall_score dual-API helpers
+# ===========================================================================
+
+class TestCollectorScoreHelpers:
+
+    def test_score_field_legacy_criteria_dict(self):
+        from monitoring.collector import _score_field
+        obj = type("JudgeScore", (), {"criteria": {"accuracy": 8.5, "relevance": 7.0}})()
+        assert _score_field(obj, "accuracy") == pytest.approx(8.5)
+        assert _score_field(obj, "missing") is None
+
+    def test_score_field_new_dataclass_attr(self):
+        from monitoring.collector import _score_field
+        from clinical.schemas import ClinicalJudgeScore
+        score = ClinicalJudgeScore(recommendation_id="x", gap_identification_accuracy=9.0)
+        assert _score_field(score, "gap_identification_accuracy") == pytest.approx(9.0)
+        assert _score_field(score, "nonexistent") is None
+
+    def test_overall_score_legacy_score_attr(self):
+        from monitoring.collector import _overall_score
+        obj = type("JudgeScore", (), {"score": 7.5})()
+        assert _overall_score(obj) == pytest.approx(7.5)
+
+    def test_overall_score_new_overall_attr(self):
+        from monitoring.collector import _overall_score
+        from clinical.schemas import ClinicalJudgeScore
+        score = ClinicalJudgeScore(recommendation_id="x", accuracy=10.0, completeness=10.0,
+                                   relevance=10.0, conciseness=10.0, clarity=10.0,
+                                   gap_identification_accuracy=10.0, action_appropriateness=10.0,
+                                   evidence_citation_quality=10.0, safety_flag_coverage=10.0)
+        assert _overall_score(score) == pytest.approx(10.0)
+
+    def test_overall_score_fallback_default(self):
+        from monitoring.collector import _overall_score
+        obj = type("Empty", (), {})()
+        assert _overall_score(obj) == pytest.approx(0.0)
+
+    @pytest.mark.asyncio
+    async def test_record_judge_with_clinical_score(self, tmp_path):
+        from monitoring.collector import record_judge
+        from clinical.schemas import ClinicalJudgeScore
+        from monitoring.registry import MetricsRegistry
+        from monitoring.store import MonitoringStore
+
+        store = MonitoringStore(db_path=str(tmp_path / "test.db"))
+        registry = MetricsRegistry(store=store)
+
+        import monitoring.registry as reg_mod
+        original_get = reg_mod.get_registry
+
+        def _mock_get():
+            return registry
+
+        reg_mod.get_registry = _mock_get
+        try:
+            score = ClinicalJudgeScore(
+                recommendation_id="rec-1",
+                accuracy=8.0, completeness=7.0, relevance=9.0,
+                conciseness=6.0, clarity=7.5,
+                gap_identification_accuracy=8.5, action_appropriateness=7.0,
+                evidence_citation_quality=6.5, safety_flag_coverage=9.0,
+                reasoning="test",
+            )
+            await record_judge("session-1", "hedis", score, version_id="v1", judge_type="hedis")
+        finally:
+            reg_mod.get_registry = original_get

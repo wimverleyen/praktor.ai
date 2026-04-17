@@ -8,6 +8,7 @@ phi_scrubbed=True is enforced as a hard gate before any FAISS write or LLM call.
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import time
 from dataclasses import dataclass, field
@@ -19,6 +20,7 @@ from typing import Literal
 # ---------------------------------------------------------------------------
 
 _MEMBER_SALT = os.getenv("PRAKTOR_MEMBER_SALT", "praktor-clinical-default-salt")
+_salt_warned = False
 
 
 def hash_member_id(raw_member_id: str) -> str:
@@ -27,6 +29,13 @@ def hash_member_id(raw_member_id: str) -> str:
     Uses PRAKTOR_MEMBER_SALT env var — set a unique secret per environment.
     Returns 64-char hex string (full SHA-256).
     """
+    global _salt_warned
+    if not _salt_warned and _MEMBER_SALT == "praktor-clinical-default-salt":
+        logging.getLogger(__name__).warning(
+            "PRAKTOR_MEMBER_SALT is not set. "
+            "Member ID hashes use a public default — set a unique secret before any non-local deployment."
+        )
+        _salt_warned = True
     salted = f"{_MEMBER_SALT}:{raw_member_id}"
     return hashlib.sha256(salted.encode()).hexdigest()
 
@@ -202,6 +211,77 @@ class ClinicalJudgeScore:
             f"action={self.action_appropriateness:.1f} "
             f"evidence={self.evidence_citation_quality:.1f} "
             f"safety={self.safety_flag_coverage:.1f}]"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Diabetes HEDIS judge score
+# ---------------------------------------------------------------------------
+
+@dataclass
+class DiabetesJudgeScore:
+    """
+    10-criterion quality score for a diabetes HEDIS recommendation.
+
+    5 base performance dimensions (shared with all agents):
+      accuracy, completeness, relevance, conciseness, clarity
+
+    5 diabetes extensions (MY 2026):
+      inertia_detection_accuracy, escalation_ladder_correctness,
+      gap_stacking_completeness, evidence_anchor_quality,
+      safety_exclusion_coverage
+    """
+
+    recommendation_id: str
+    # --- 5 base performance dimensions ---
+    accuracy: float = 5.0
+    completeness: float = 5.0
+    relevance: float = 5.0
+    conciseness: float = 5.0
+    clarity: float = 5.0
+    # --- 5 diabetes extensions ---
+    inertia_detection_accuracy: float = 5.0
+    escalation_ladder_correctness: float = 5.0
+    gap_stacking_completeness: float = 5.0
+    evidence_anchor_quality: float = 5.0
+    safety_exclusion_coverage: float = 5.0
+    reasoning: str = ""
+    outcome: str | None = None
+
+    @property
+    def base_overall(self) -> float:
+        return round(
+            (self.accuracy + self.completeness + self.relevance
+             + self.conciseness + self.clarity) / 5.0, 2,
+        )
+
+    @property
+    def diabetes_overall(self) -> float:
+        return round(
+            (self.inertia_detection_accuracy + self.escalation_ladder_correctness
+             + self.gap_stacking_completeness + self.evidence_anchor_quality
+             + self.safety_exclusion_coverage) / 5.0, 2,
+        )
+
+    @property
+    def overall(self) -> float:
+        return round(
+            (self.accuracy + self.completeness + self.relevance + self.conciseness
+             + self.clarity + self.inertia_detection_accuracy
+             + self.escalation_ladder_correctness + self.gap_stacking_completeness
+             + self.evidence_anchor_quality + self.safety_exclusion_coverage) / 10.0, 2,
+        )
+
+    def summary(self) -> str:
+        return (
+            f"overall={self.overall:.1f}/10  "
+            f"[base: acc={self.accuracy:.1f} cmp={self.completeness:.1f} "
+            f"rel={self.relevance:.1f} con={self.conciseness:.1f} cla={self.clarity:.1f}]  "
+            f"[diabetes: inertia={self.inertia_detection_accuracy:.1f} "
+            f"ladder={self.escalation_ladder_correctness:.1f} "
+            f"stacking={self.gap_stacking_completeness:.1f} "
+            f"evidence={self.evidence_anchor_quality:.1f} "
+            f"safety={self.safety_exclusion_coverage:.1f}]"
         )
 
 
