@@ -11,13 +11,23 @@ import re
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
-from settings import create_log
+from praktor.settings import create_log
 
 log = create_log()
 
 MAX_DETECTOR_CHARS = 100_000
 _CHUNK_SIZE = 10_000
 _CHUNK_OVERLAP = 200
+
+
+class RegexEntities:
+    """Named constants for RegexDetector entity types. Use instead of magic strings."""
+    US_SSN = "US_SSN"
+    PHONE_NUMBER = "PHONE_NUMBER"
+    EMAIL_ADDRESS = "EMAIL_ADDRESS"
+    DATE_OF_BIRTH = "DATE_OF_BIRTH"
+    US_PASSPORT = "US_PASSPORT"
+    CREDIT_CARD = "CREDIT_CARD"
 
 
 @dataclass
@@ -101,6 +111,9 @@ class RegexDetector:
         text: str, entities: list[str], offset: int
     ) -> list[DetectionResult]:
         results: list[DetectionResult] = []
+        for name in entities:
+            if name not in _PATTERNS:
+                log.warning("RegexDetector: unknown entity '%s' — no pattern registered. Detection skipped. Use RegexEntities constants to avoid this.", name)
         active = {e: p for e, p in _PATTERNS.items() if e in entities}
         for entity_type, pattern in active.items():
             for match in pattern.finditer(text):

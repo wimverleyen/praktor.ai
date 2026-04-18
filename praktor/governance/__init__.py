@@ -23,7 +23,7 @@ Public API:
     RBACError          — raised when token verification fails
     ConfigurationError — raised when RBAC is misconfigured
 """
-from governance.policy import (
+from praktor.governance.policy import (
     GovernancePolicy,
     DetectorConfig,
     PolicyAction,
@@ -31,28 +31,30 @@ from governance.policy import (
     GovernancePolicyViolation,
     EvaluationFailedError,
 )
-from governance.detectors import (
+from praktor.governance.helpers import block_pii
+from praktor.governance.detectors import (
     PIIDetector,
     DetectionResult,
     RegexDetector,
+    RegexEntities,
     PresidioDetector,
     DetectorUnavailableError,
     load_detector,
 )
-from governance.audit import (
+from praktor.governance.audit import (
     AuditEntry,
     AuditSink,
     LocalFileAuditSink,
     StdoutAuditSink,
 )
-from governance.rbac import (
+from praktor.governance.rbac import (
     CallerIdentity,
     issue_token,
     verify_token,
     RBACError,
     ConfigurationError,
 )
-from governance.evaluators import (
+from praktor.governance.evaluators import (
     Evaluator,
     EvaluationPass,
     EvaluatorUnavailableError,
@@ -67,10 +69,13 @@ __all__ = [
     "AuditSinkType",
     "GovernancePolicyViolation",
     "EvaluationFailedError",
+    # Convenience
+    "block_pii",
     # Detectors
     "PIIDetector",
     "DetectionResult",
     "RegexDetector",
+    "RegexEntities",
     "PresidioDetector",
     "DetectorUnavailableError",
     "load_detector",
