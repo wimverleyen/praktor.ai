@@ -64,6 +64,39 @@ class TestAgentDefinition:
         assert len(defn.improvement_passes) == 2
         assert defn.improvement_passes[0].output_key == "previous_response"
 
+    def test_prompt_template_hash_is_sha256(self):
+        import hashlib
+        template = "Write about {topic}"
+        defn = AgentDefinition(
+            name="h",
+            prompt_template=template,
+            input_schema=_SimpleInput,
+        )
+        expected = hashlib.sha256(template.encode("utf-8")).hexdigest()
+        assert defn.prompt_template_hash == expected
+
+    def test_prompt_version_defaults_to_hash_prefix(self):
+        defn = AgentDefinition(
+            name="h",
+            prompt_template="Write about {topic}",
+            input_schema=_SimpleInput,
+        )
+        assert defn.prompt_version == defn.prompt_template_hash[:12]
+
+    def test_explicit_prompt_version_preserved(self):
+        defn = AgentDefinition(
+            name="h",
+            prompt_template="Write about {topic}",
+            input_schema=_SimpleInput,
+            prompt_version="v2.0.0",
+        )
+        assert defn.prompt_version == "v2.0.0"
+
+    def test_different_templates_yield_different_hashes(self):
+        a = AgentDefinition(name="a", prompt_template="Template A {x}", input_schema=_SimpleInput)
+        b = AgentDefinition(name="b", prompt_template="Template B {x}", input_schema=_SimpleInput)
+        assert a.prompt_template_hash != b.prompt_template_hash
+
     def test_input_schema_validation(self):
         defn = AgentDefinition(
             name="simple",

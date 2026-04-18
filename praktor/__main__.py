@@ -19,9 +19,11 @@ def cmd_receive(args):
     """Start the async RabbitMQ consumer."""
     import asyncio
     import agents  # noqa: F401 — triggers auto-registration of all agents
+    from core.observability import init_tracer_provider
     from core.router import get_global_router
     from transport.consumer import run_consumer
 
+    init_tracer_provider()
     router = get_global_router()
     asyncio.run(run_consumer(router))
 

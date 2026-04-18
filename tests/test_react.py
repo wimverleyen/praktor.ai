@@ -76,7 +76,7 @@ class TestReActLoop:
             "Final Answer: Python 3.13 was released in October 2024."
         )
 
-        with patch("core.tool.get_tool", return_value=web_search), \
+        with patch("core.agent.get_tool", return_value=web_search), \
              patch("LLM.llm_factory.LLMFactory") as mock_factory:
 
             mock_llm = MagicMock()
@@ -110,7 +110,7 @@ class TestReActLoop:
 
         direct_answer = "Thought: I already know this.\nFinal Answer: The sky is blue."
 
-        with patch("core.tool.get_tool", return_value=web_search), \
+        with patch("core.agent.get_tool", return_value=web_search), \
              patch("LLM.llm_factory.LLMFactory") as mock_factory:
 
             mock_factory.return_value.create_llm.return_value = MagicMock()
@@ -143,7 +143,7 @@ class TestReActLoop:
             "Thought: Done.\nFinal Answer: Combined answer from two searches.",
         ]
 
-        with patch("core.tool.get_tool", return_value=web_search), \
+        with patch("core.agent.get_tool", return_value=web_search), \
              patch("LLM.llm_factory.LLMFactory") as mock_factory:
 
             mock_factory.return_value.create_llm.return_value = MagicMock()
@@ -176,7 +176,7 @@ class TestReActLoop:
             "Thought: Try again.\nAction: web_search\nAction Input: q2",
         ]
 
-        with patch("core.tool.get_tool", return_value=web_search), \
+        with patch("core.agent.get_tool", return_value=web_search), \
              patch("LLM.llm_factory.LLMFactory") as mock_factory:
 
             mock_factory.return_value.create_llm.return_value = MagicMock()
@@ -208,7 +208,7 @@ class TestReActLoop:
             "Thought: That failed, I'll answer anyway.\nFinal Answer: Sorry, couldn't find that.",
         ]
 
-        with patch("core.tool.get_tool", return_value=web_search), \
+        with patch("core.agent.get_tool", return_value=web_search), \
              patch("LLM.llm_factory.LLMFactory") as mock_factory:
 
             mock_factory.return_value.create_llm.return_value = MagicMock()
@@ -243,7 +243,7 @@ class TestReActLoop:
             "Thought: Search failed. I'll answer from memory.\nFinal Answer: I don't know.",
         ]
 
-        with patch("core.tool.get_tool", return_value=failing_tool), \
+        with patch("core.agent.get_tool", return_value=failing_tool), \
              patch("LLM.llm_factory.LLMFactory") as mock_factory:
 
             mock_factory.return_value.create_llm.return_value = MagicMock()
@@ -292,7 +292,7 @@ class TestReActObservability:
             original_init(self_span, **kwargs)
             recorded_span.append(self_span)
 
-        with patch("core.tool.get_tool", return_value=web_search), \
+        with patch("core.agent.get_tool", return_value=web_search), \
              patch("LLM.llm_factory.LLMFactory") as mock_factory, \
              patch.object(Span, "__init__", _capture_span):
 

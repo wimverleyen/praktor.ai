@@ -260,12 +260,19 @@ LANGUAGE: en"""
             for chunk in dry_response.split(" "):
                 yield chunk + " "
 
-        # Patch both adapters so any code path works
-        if agent._react_adapter:
-            agent._react_adapter.ainvoke = mock_ainvoke
-            agent._react_adapter.astream = mock_astream
+        # _react_adapter is lazily initialized; force-create it so we can mock it.
+        from LLM.llm_interface import AsyncLLMAdapter
+        from unittest.mock import MagicMock, patch
+        with patch("LLM.llm_factory.LLMFactory") as _mf:
+            _mf.return_value.create_llm.return_value = MagicMock()
+            agent._react_adapter = AsyncLLMAdapter(
+                prompt_template=defn.prompt_template, model="dry-run-mock"
+            )
+        agent._react_adapter.ainvoke = mock_ainvoke
+        agent._react_adapter.astream = mock_astream
         if agent._adapter:
             agent._adapter.ainvoke = mock_ainvoke
+            agent._adapter.astream = mock_astream
 
         member_hash = hash_member_id("TEST-DRY-001")
         payload = {

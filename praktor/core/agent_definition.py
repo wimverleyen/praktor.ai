@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import TYPE_CHECKING
@@ -78,6 +79,12 @@ class AgentDefinition:
     max_steps: int = 1
     """1 = single linear chain. >1 = ReAct tool-use loop (requires tools)."""
 
+    prompt_version: str = ""
+    """Optional explicit version label (e.g. 'v1.2.0'). Defaults to first 12 chars of hash."""
+
+    # Auto-computed at post-init — do not set manually.
+    prompt_template_hash: str = field(default="", init=False, repr=False)
+
     governance_policy: GovernancePolicy | None = None
     """
     Optional compliance governance for this agent.
@@ -94,3 +101,9 @@ class AgentDefinition:
 
     Default None = governance disabled. Backwards compatible with all existing agents.
     """
+
+    def __post_init__(self) -> None:
+        template_bytes = self.prompt_template.encode("utf-8", errors="replace")
+        self.prompt_template_hash = hashlib.sha256(template_bytes).hexdigest()
+        if not self.prompt_version:
+            self.prompt_version = self.prompt_template_hash[:12]

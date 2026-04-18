@@ -75,3 +75,25 @@ def load_evaluator(import_path: str) -> Evaluator:
     mod = importlib.import_module(module_path)
     cls = getattr(mod, class_name)
     return cls()
+
+
+# LLM-as-judge evaluators (domain-specific, PHI-aware)
+from governance.evaluators.llm_judge import (  # noqa: E402
+    JudgeResult,
+    LLMJudgeEvaluator,
+    FaithfulnessJudge,
+    HelpfulnessJudge,
+    SafetyJudge,
+)
+
+__all__ = [
+    "Evaluator",
+    "EvaluationPass",
+    "EvaluatorUnavailableError",
+    "load_evaluator",
+    "JudgeResult",
+    "LLMJudgeEvaluator",
+    "FaithfulnessJudge",
+    "HelpfulnessJudge",
+    "SafetyJudge",
+]

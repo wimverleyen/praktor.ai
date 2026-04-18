@@ -34,7 +34,13 @@ class TestAsyncLLMAdapter:
     async def test_ainvoke_uses_cache_on_second_call(self):
         adapter, mock_llm = self._make_adapter()
 
-        with patch("LLM.llm_interface._invoke_with_retry", new_callable=AsyncMock) as mock_retry:
+        class _MemCache:
+            def __init__(self): self._d = {}
+            def get(self, key): return self._d.get(key)
+            def set(self, key, value, **_): self._d[key] = value
+
+        with patch("LLM.llm_interface._cache", new=_MemCache()), \
+             patch("LLM.llm_interface._invoke_with_retry", new_callable=AsyncMock) as mock_retry:
             mock_retry.return_value = "Cached response"
             # First call
             r1 = await adapter.ainvoke({"question": "Same question?"})
