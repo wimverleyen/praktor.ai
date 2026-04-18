@@ -25,9 +25,9 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from settings import create_log
-from clinical.evaluation.base_judge import BaseJudge
-from clinical.schemas import DiabetesJudgeScore  # noqa: F401 — re-export for callers
+from praktor.settings import create_log
+from praktor.clinical.evaluation.base_judge import BaseJudge
+from praktor.clinical.schemas import DiabetesJudgeScore  # noqa: F401 — re-export for callers
 
 log = create_log()
 

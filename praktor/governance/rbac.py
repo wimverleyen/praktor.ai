@@ -22,11 +22,11 @@ Never silently open access.
 
 Usage:
     # Issuing tokens (for testing / integration):
-    from governance.rbac import issue_token
+    from praktor.governance.rbac import issue_token
     token = issue_token(caller_id="ml-team", roles=["hipaa-agent"], secret="mykey")
 
     # Verifying in Router:
-    from governance.rbac import verify_token, CallerIdentity
+    from praktor.governance.rbac import verify_token, CallerIdentity
     identity = verify_token(token, secret="mykey", required_roles=["hipaa-agent"])
 """
 from __future__ import annotations

@@ -26,16 +26,16 @@ import time
 
 from pydantic import BaseModel
 
-from core.agent_definition import AgentDefinition, MemoryPolicy
+from praktor.core.agent_definition import AgentDefinition, MemoryPolicy
 
 # Register all clinical tools at import time
-import clinical.tools.claims_lookup       # noqa: F401
-import clinical.tools.ehr_lookup          # noqa: F401
-import clinical.tools.gap_registry        # noqa: F401
-import clinical.tools.outreach_history    # noqa: F401
-import clinical.tools.sdoh_lookup         # noqa: F401
-import clinical.tools.measure_criteria    # noqa: F401
-import clinical.tools.drug_adherence      # noqa: F401
+import praktor.clinical.tools.claims_lookup       # noqa: F401
+import praktor.clinical.tools.ehr_lookup          # noqa: F401
+import praktor.clinical.tools.gap_registry        # noqa: F401
+import praktor.clinical.tools.outreach_history    # noqa: F401
+import praktor.clinical.tools.sdoh_lookup         # noqa: F401
+import praktor.clinical.tools.measure_criteria    # noqa: F401
+import praktor.clinical.tools.drug_adherence      # noqa: F401
 
 
 # ---------------------------------------------------------------------------

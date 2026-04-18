@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from core.agent_definition import AgentDefinition, MemoryPolicy, OutputSink
+from praktor.core.agent_definition import AgentDefinition, MemoryPolicy, OutputSink
 
 _PROMPT = """You are a teacher and expert in machine learning, artificial intelligence, Generative AI, and data science.
 

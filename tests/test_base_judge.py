@@ -14,7 +14,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "praktor"))
 
 
 # ---------------------------------------------------------------------------
@@ -23,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "praktor"))
 
 def _make_stub_judge(model: str = "test-model"):
     """Return a concrete BaseJudge subclass with no-op abstract methods."""
-    from clinical.evaluation.base_judge import BaseJudge
+    from praktor.clinical.evaluation.base_judge import BaseJudge
 
     class _StubJudge(BaseJudge):
         _eval_prompt = "evaluate: {response}"
@@ -36,7 +35,7 @@ def _make_stub_judge(model: str = "test-model"):
         def _neutral_score(self, reason):
             return {"score": 0.0, "reason": reason}
 
-    with patch("clinical.evaluation.base_judge.BaseJudge._init_adapters"):
+    with patch("praktor.clinical.evaluation.base_judge.BaseJudge._init_adapters"):
         j = _StubJudge(model=model)
     j._eval_adapter = MagicMock()
     j._compare_adapter = MagicMock()
@@ -50,7 +49,7 @@ def _make_stub_judge(model: str = "test-model"):
 class TestInitAdaptersGuard:
 
     def test_missing_eval_prompt_raises(self):
-        from clinical.evaluation.base_judge import BaseJudge
+        from praktor.clinical.evaluation.base_judge import BaseJudge
 
         class _NoPrompt(BaseJudge):
             _eval_prompt = ""
@@ -64,7 +63,7 @@ class TestInitAdaptersGuard:
             _NoPrompt()
 
     def test_missing_compare_prompt_raises(self):
-        from clinical.evaluation.base_judge import BaseJudge
+        from praktor.clinical.evaluation.base_judge import BaseJudge
 
         class _NoCompare(BaseJudge):
             _eval_prompt = "evaluate: {response}"
@@ -81,12 +80,12 @@ class TestInitAdaptersGuard:
 class TestAbstractEnforcement:
 
     def test_cannot_instantiate_base_judge_directly(self):
-        from clinical.evaluation.base_judge import BaseJudge
+        from praktor.clinical.evaluation.base_judge import BaseJudge
         with pytest.raises(TypeError):
             BaseJudge()  # type: ignore
 
     def test_subclass_missing_parse_score_raises(self):
-        from clinical.evaluation.base_judge import BaseJudge
+        from praktor.clinical.evaluation.base_judge import BaseJudge
         class _Incomplete(BaseJudge):
             _eval_prompt = ""
             _compare_prompt = ""
@@ -99,7 +98,7 @@ class TestAbstractEnforcement:
             _Incomplete()  # type: ignore
 
     def test_subclass_missing_neutral_score_raises(self):
-        from clinical.evaluation.base_judge import BaseJudge
+        from praktor.clinical.evaluation.base_judge import BaseJudge
         class _Incomplete(BaseJudge):
             _eval_prompt = ""
             _compare_prompt = ""

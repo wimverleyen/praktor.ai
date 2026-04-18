@@ -12,8 +12,8 @@ from typing import AsyncGenerator
 import aio_pika
 from aio_pika import IncomingMessage
 
-from transport.transport import Transport, TransportMessage, TransportError
-from settings import create_log
+from praktor.transport.transport import Transport, TransportMessage, TransportError
+from praktor.settings import create_log
 
 log = create_log()
 

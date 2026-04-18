@@ -8,13 +8,11 @@ import asyncio
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
-sys.path.insert(0, str(Path(__file__).parent.parent / 'praktor'))
-
 import pytest
 from pydantic import BaseModel
 
-from core.agent_definition import AgentDefinition, MemoryPolicy
-from core.tool import ToolResult
+from praktor.core.agent_definition import AgentDefinition, MemoryPolicy
+from praktor.core.tool import ToolResult
 
 
 # ---------------------------------------------------------------------------
@@ -76,13 +74,13 @@ class TestReActLoop:
             "Final Answer: Python 3.13 was released in October 2024."
         )
 
-        with patch("core.agent.get_tool", return_value=web_search), \
-             patch("LLM.llm_factory.LLMFactory") as mock_factory:
+        with patch("praktor.core.agent.get_tool", return_value=web_search), \
+             patch("praktor.LLM.llm_factory.LLMFactory") as mock_factory:
 
             mock_llm = MagicMock()
             mock_factory.return_value.create_llm.return_value = mock_llm
 
-            from core.agent import Agent
+            from praktor.core.agent import Agent
             agent = Agent(definition)
             agent._tools = {"web_search": web_search}
 
@@ -110,12 +108,12 @@ class TestReActLoop:
 
         direct_answer = "Thought: I already know this.\nFinal Answer: The sky is blue."
 
-        with patch("core.agent.get_tool", return_value=web_search), \
-             patch("LLM.llm_factory.LLMFactory") as mock_factory:
+        with patch("praktor.core.agent.get_tool", return_value=web_search), \
+             patch("praktor.LLM.llm_factory.LLMFactory") as mock_factory:
 
             mock_factory.return_value.create_llm.return_value = MagicMock()
 
-            from core.agent import Agent
+            from praktor.core.agent import Agent
             agent = Agent(definition)
             agent._tools = {"web_search": web_search}
             agent._react_adapter = MagicMock()
@@ -143,12 +141,12 @@ class TestReActLoop:
             "Thought: Done.\nFinal Answer: Combined answer from two searches.",
         ]
 
-        with patch("core.agent.get_tool", return_value=web_search), \
-             patch("LLM.llm_factory.LLMFactory") as mock_factory:
+        with patch("praktor.core.agent.get_tool", return_value=web_search), \
+             patch("praktor.LLM.llm_factory.LLMFactory") as mock_factory:
 
             mock_factory.return_value.create_llm.return_value = MagicMock()
 
-            from core.agent import Agent
+            from praktor.core.agent import Agent
             agent = Agent(definition)
             agent._tools = {"web_search": web_search}
             agent._react_adapter = MagicMock()
@@ -176,12 +174,12 @@ class TestReActLoop:
             "Thought: Try again.\nAction: web_search\nAction Input: q2",
         ]
 
-        with patch("core.agent.get_tool", return_value=web_search), \
-             patch("LLM.llm_factory.LLMFactory") as mock_factory:
+        with patch("praktor.core.agent.get_tool", return_value=web_search), \
+             patch("praktor.LLM.llm_factory.LLMFactory") as mock_factory:
 
             mock_factory.return_value.create_llm.return_value = MagicMock()
 
-            from core.agent import Agent
+            from praktor.core.agent import Agent
             agent = Agent(definition)
             agent._tools = {"web_search": web_search}
             agent._react_adapter = MagicMock()
@@ -208,12 +206,12 @@ class TestReActLoop:
             "Thought: That failed, I'll answer anyway.\nFinal Answer: Sorry, couldn't find that.",
         ]
 
-        with patch("core.agent.get_tool", return_value=web_search), \
-             patch("LLM.llm_factory.LLMFactory") as mock_factory:
+        with patch("praktor.core.agent.get_tool", return_value=web_search), \
+             patch("praktor.LLM.llm_factory.LLMFactory") as mock_factory:
 
             mock_factory.return_value.create_llm.return_value = MagicMock()
 
-            from core.agent import Agent
+            from praktor.core.agent import Agent
             agent = Agent(definition)
             agent._tools = {"web_search": web_search}
             agent._react_adapter = MagicMock()
@@ -243,12 +241,12 @@ class TestReActLoop:
             "Thought: Search failed. I'll answer from memory.\nFinal Answer: I don't know.",
         ]
 
-        with patch("core.agent.get_tool", return_value=failing_tool), \
-             patch("LLM.llm_factory.LLMFactory") as mock_factory:
+        with patch("praktor.core.agent.get_tool", return_value=failing_tool), \
+             patch("praktor.LLM.llm_factory.LLMFactory") as mock_factory:
 
             mock_factory.return_value.create_llm.return_value = MagicMock()
 
-            from core.agent import Agent
+            from praktor.core.agent import Agent
             agent = Agent(definition)
             agent._tools = {"web_search": failing_tool}
             agent._react_adapter = MagicMock()
@@ -273,7 +271,7 @@ class TestReActObservability:
     @pytest.mark.asyncio
     async def test_trajectory_records_llm_and_tool_calls(self):
         """After a run with one tool call, trajectory has >=2 events: llm_call + tool_call."""
-        from core.observability import Span, tracer
+        from praktor.core.observability import Span, tracer
         from unittest.mock import patch
 
         definition = _make_definition(max_steps=3)
@@ -292,13 +290,13 @@ class TestReActObservability:
             original_init(self_span, **kwargs)
             recorded_span.append(self_span)
 
-        with patch("core.agent.get_tool", return_value=web_search), \
-             patch("LLM.llm_factory.LLMFactory") as mock_factory, \
+        with patch("praktor.core.agent.get_tool", return_value=web_search), \
+             patch("praktor.LLM.llm_factory.LLMFactory") as mock_factory, \
              patch.object(Span, "__init__", _capture_span):
 
             mock_factory.return_value.create_llm.return_value = MagicMock()
 
-            from core.agent import Agent
+            from praktor.core.agent import Agent
             agent = Agent(definition)
             agent._tools = {"web_search": web_search}
             agent._react_adapter = MagicMock()
@@ -327,10 +325,10 @@ class TestReActObservability:
             memory_policy=MemoryPolicy.NONE,
         )
 
-        with patch("LLM.llm_factory.LLMFactory") as mock_factory:
+        with patch("praktor.LLM.llm_factory.LLMFactory") as mock_factory:
             mock_factory.return_value.create_llm.return_value = MagicMock()
 
-            from core.agent import Agent
+            from praktor.core.agent import Agent
             agent = Agent(definition)
 
             async def _fake_astream(data, call_span=None):

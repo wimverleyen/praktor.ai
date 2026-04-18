@@ -2,10 +2,10 @@ from pika import ConnectionParameters, BlockingConnection, BasicProperties
 
 from json import loads
 
-from agent_method import WriteCoverLetter, JobApplication, KeywordsExtraction, JobInterview, ThankYouEmail, Search, Message
-from schemas import parse_message
+from praktor.agent_method import WriteCoverLetter, JobApplication, KeywordsExtraction, JobInterview, ThankYouEmail, Search, Message
+from praktor.schemas import parse_message
 
-from settings import create_log
+from praktor.settings import create_log
 
 log = create_log()
 

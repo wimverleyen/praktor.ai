@@ -28,10 +28,10 @@ import json
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from core.judge import JudgeEvaluator, JudgeScore
-from core.prompt_registry import PromptRegistry, PromptVersion
-from LLM.llm_interface import AsyncLLMAdapter
-from settings import MODEL, OLLAMA_HOST, create_log
+from praktor.core.judge import JudgeEvaluator, JudgeScore
+from praktor.core.prompt_registry import PromptRegistry, PromptVersion
+from praktor.LLM.llm_interface import AsyncLLMAdapter
+from praktor.settings import MODEL, OLLAMA_HOST, create_log
 
 log = create_log()
 

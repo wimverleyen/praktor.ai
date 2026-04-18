@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 from pydantic import BaseModel
 
 if TYPE_CHECKING:
-    from governance.policy import GovernancePolicy
+    from praktor.governance.policy import GovernancePolicy
 
 
 class MemoryPolicy(Enum):

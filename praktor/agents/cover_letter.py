@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from core.agent_definition import AgentDefinition, MemoryPolicy, OutputSink, ImprovementPass
+from praktor.core.agent_definition import AgentDefinition, MemoryPolicy, OutputSink, ImprovementPass
 
 _INITIAL_PROMPT = """You are an experienced professional resume writer specializing in leadership roles in Data Science, AI, and Engineering.
 

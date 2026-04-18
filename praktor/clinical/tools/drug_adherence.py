@@ -12,8 +12,8 @@ from __future__ import annotations
 
 import json
 
-from core.tool import ToolResult, register_tool
-from settings import create_log
+from praktor.core.tool import ToolResult, register_tool
+from praktor.settings import create_log
 
 log = create_log()
 
@@ -37,7 +37,7 @@ class DrugAdherenceTool:
 
             drug_class = params.get("drug_class")
 
-            from clinical.data.clinical_store import get_clinical_store
+            from praktor.clinical.data.clinical_store import get_clinical_store
             store = get_clinical_store()
             scores = store.get_pdc(member_id_hash, drug_class=drug_class)
 

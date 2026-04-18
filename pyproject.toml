@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "praktor"
-version = "0.3.0"
+version = "0.4.0"
 description = "Local-first agentic framework with built-in governance for regulated industries"
 requires-python = ">=3.11"
 dependencies = [
@@ -51,4 +51,10 @@ dev = [
     "pytest-asyncio>=0.23.0",
     "opentelemetry-api>=1.20.0",
     "opentelemetry-sdk>=1.20.0",
+]
+
+[tool.hatch.build.targets.wheel]
+include = [
+    "praktor/**/*.py",
+    "praktor/py.typed",
 ]

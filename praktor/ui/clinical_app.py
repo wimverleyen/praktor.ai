@@ -107,13 +107,13 @@ def _action_icon(action_type: str) -> str:
 
 @st.cache_resource
 def _get_store():
-    from clinical.data.clinical_store import get_clinical_store
+    from praktor.clinical.data.clinical_store import get_clinical_store
     return get_clinical_store()
 
 
 @st.cache_resource
 def _get_tracker():
-    from clinical.evaluation.closure_tracker import get_tracker
+    from praktor.clinical.evaluation.closure_tracker import get_tracker
     return get_tracker()
 
 
@@ -250,7 +250,7 @@ def tab_dataset():
     st.divider()
 
     # Member cards
-    from clinical.schemas import hash_member_id
+    from praktor.clinical.schemas import hash_member_id
     for raw_id, info in _DIABETES_STORIES.items():
         member_hash = hash_member_id(raw_id)
         profile = _load_member_profile(member_hash)
@@ -731,15 +731,15 @@ def tab_evaluate():
                 try:
                     async def _run_judge():
                         if eval_agent == "diabetes_hedis":
-                            from clinical.evaluation.diabetes_hedis_judge import DiabetesHEDISJudge
+                            from praktor.clinical.evaluation.diabetes_hedis_judge import DiabetesHEDISJudge
                             j = DiabetesHEDISJudge(model=eval_model)
                             return await j.evaluate(eval_response, eval_context or "(none)")
                         elif eval_agent == "hedis_gap":
-                            from clinical.evaluation.hedis_judge import HEDISJudge
+                            from praktor.clinical.evaluation.hedis_judge import HEDISJudge
                             j = HEDISJudge(model=eval_model)
                             return await j.evaluate(eval_response, eval_context or "(none)")
                         else:
-                            from core.judge import JudgeEvaluator
+                            from praktor.core.judge import JudgeEvaluator
                             j = JudgeEvaluator(model=eval_model)
                             return await j.evaluate(eval_question, eval_response)
 

@@ -1,6 +1,6 @@
 from langchain_community.document_loaders import PyPDFLoader
 
-from settings import MODEL
+from praktor.settings import MODEL
 
 import pika
 
@@ -8,8 +8,8 @@ import time
 import random
 from json import dumps
 
-from settings import create_log, MD, PDF
-from utils import save_markdown
+from praktor.settings import create_log, MD, PDF
+from praktor.utils import save_markdown
 
 from unittest import TestCase, TestLoader, TextTestRunner
 

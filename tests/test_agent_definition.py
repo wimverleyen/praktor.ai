@@ -1,10 +1,8 @@
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent / 'praktor'))
-
 from pydantic import BaseModel
-from core.agent_definition import (
+from praktor.core.agent_definition import (
     AgentDefinition,
     ImprovementPass,
     MemoryPolicy,

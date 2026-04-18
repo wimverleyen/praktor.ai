@@ -28,8 +28,8 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from LLM.llm_interface import AsyncLLMAdapter
-from settings import MODEL, create_log
+from praktor.LLM.llm_interface import AsyncLLMAdapter
+from praktor.settings import MODEL, create_log
 
 log = create_log()
 

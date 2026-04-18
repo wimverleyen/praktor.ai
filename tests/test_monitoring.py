@@ -14,7 +14,6 @@ import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "praktor"))
 
 import pytest
 
@@ -26,29 +25,29 @@ import pytest
 class TestCostTable:
 
     def test_gpt4o_cost(self):
-        from monitoring.cost import compute_cost
+        from praktor.monitoring.cost import compute_cost
         # 1000 input + 500 output at gpt-4o rates
         cost = compute_cost("gpt-4o", input_tokens=1000, output_tokens=500)
         assert cost == pytest.approx((1000 * 0.0025 + 500 * 0.010) / 1000)
 
     def test_gpt4o_mini_cheaper_than_gpt4o(self):
-        from monitoring.cost import compute_cost
+        from praktor.monitoring.cost import compute_cost
         mini = compute_cost("gpt-4o-mini", 1000, 1000)
         full = compute_cost("gpt-4o", 1000, 1000)
         assert mini < full
 
     def test_local_model_zero_cost(self):
-        from monitoring.cost import compute_cost
+        from praktor.monitoring.cost import compute_cost
         assert compute_cost("llama3:8b", 5000, 5000) == 0.0
         assert compute_cost("qwen2.5", 5000, 5000) == 0.0
         assert compute_cost("mistral", 5000, 5000) == 0.0
 
     def test_unknown_model_zero_cost(self):
-        from monitoring.cost import compute_cost
+        from praktor.monitoring.cost import compute_cost
         assert compute_cost("some-unknown-model-xyz", 1000, 1000) == 0.0
 
     def test_claude_sonnet_prefix_match(self):
-        from monitoring.cost import compute_cost, match_model
+        from praktor.monitoring.cost import compute_cost, match_model
         key = match_model("claude-sonnet-4-6")
         assert key is not None
         assert "sonnet" in key
@@ -56,15 +55,15 @@ class TestCostTable:
         assert cost > 0
 
     def test_partial_version_suffix_stripped(self):
-        from monitoring.cost import match_model
+        from praktor.monitoring.cost import match_model
         assert match_model("gpt-4o-mini-2024-07-18") == match_model("gpt-4o-mini")
 
     def test_format_cost_local(self):
-        from monitoring.cost import format_cost
+        from praktor.monitoring.cost import format_cost
         assert "local" in format_cost(0.0)
 
     def test_format_cost_dollars(self):
-        from monitoring.cost import format_cost
+        from praktor.monitoring.cost import format_cost
         s = format_cost(1.23456)
         assert "$" in s
         assert "1.23" in s
@@ -84,11 +83,11 @@ class TestMonitoringStore:
         self._tmp.cleanup()
 
     def _make_store(self):
-        from monitoring.store import MonitoringStore
+        from praktor.monitoring.store import MonitoringStore
         return MonitoringStore(db_path=self._db)
 
     def _make_run(self, **kwargs):
-        from monitoring.store import RunRecord
+        from praktor.monitoring.store import RunRecord
         defaults = dict(
             session_id="s1", agent_type="cover_letter", model="gpt-4o",
             timestamp=time.time(), duration_ms=500.0,
@@ -130,7 +129,7 @@ class TestMonitoringStore:
 
     @pytest.mark.asyncio
     async def test_trajectory_stored(self):
-        from monitoring.store import RunRecord
+        from praktor.monitoring.store import RunRecord
         store = self._make_store()
         record = self._make_run()
         record.trajectory = [
@@ -143,7 +142,7 @@ class TestMonitoringStore:
 
     @pytest.mark.asyncio
     async def test_insert_kpi(self):
-        from monitoring.store import KPIRecord
+        from praktor.monitoring.store import KPIRecord
         store = self._make_store()
         await store.insert_kpi(KPIRecord(name="quality", value=8.5, timestamp=time.time()))
         kpis = await store.query_kpis()
@@ -153,7 +152,7 @@ class TestMonitoringStore:
 
     @pytest.mark.asyncio
     async def test_insert_judge_eval(self):
-        from monitoring.store import JudgeEvalRecord
+        from praktor.monitoring.store import JudgeEvalRecord
         store = self._make_store()
         record = JudgeEvalRecord(
             session_id="s1", agent_type="researcher", score=7.5,
@@ -204,11 +203,11 @@ class TestMonitoringStore:
 class TestMetricsRegistry:
 
     def _make_registry(self):
-        from monitoring.registry import MetricsRegistry
+        from praktor.monitoring.registry import MetricsRegistry
         return MetricsRegistry(store=None)
 
     def _make_run_record(self, **kwargs):
-        from monitoring.store import RunRecord
+        from praktor.monitoring.store import RunRecord
         defaults = dict(
             session_id="s1", agent_type="researcher", model="llama3:8b",
             timestamp=time.time(), duration_ms=800.0,
@@ -319,7 +318,7 @@ class TestCollector:
 
     def _make_span(self, agent_type="cover_letter", model="gpt-4o", error=None):
         """Build a minimal Span-like mock with a real trajectory."""
-        from core.observability import TrajectoryEvent
+        from praktor.core.observability import TrajectoryEvent
 
         span = MagicMock()
         span.agent_type = agent_type
@@ -345,47 +344,47 @@ class TestCollector:
         return defn
 
     def test_span_to_run_record_tokens(self):
-        from monitoring.collector import _span_to_run_record
+        from praktor.monitoring.collector import _span_to_run_record
         span = self._make_span()
         record = _span_to_run_record(span, self._make_definition(), token_count=380, passes=2, error=None)
         assert record.output_tokens == 380  # 150 + 30 + 200
         assert record.total_tokens >= record.output_tokens
 
     def test_span_to_run_record_cost_gpt4o(self):
-        from monitoring.collector import _span_to_run_record
+        from praktor.monitoring.collector import _span_to_run_record
         span = self._make_span(model="gpt-4o")
         record = _span_to_run_record(span, self._make_definition("gpt-4o"), token_count=380, passes=2, error=None)
         assert record.cost_usd > 0
 
     def test_span_to_run_record_local_model_zero_cost(self):
-        from monitoring.collector import _span_to_run_record
+        from praktor.monitoring.collector import _span_to_run_record
         span = self._make_span(model="llama3:8b")
         record = _span_to_run_record(span, self._make_definition("llama3:8b"), token_count=380, passes=2, error=None)
         assert record.cost_usd == 0.0
 
     def test_span_to_run_record_status_ok(self):
-        from monitoring.collector import _span_to_run_record
+        from praktor.monitoring.collector import _span_to_run_record
         span = self._make_span()
         record = _span_to_run_record(span, self._make_definition(), 380, 1, error=None)
         assert record.status == "ok"
         assert record.error is None
 
     def test_span_to_run_record_status_error(self):
-        from monitoring.collector import _span_to_run_record
+        from praktor.monitoring.collector import _span_to_run_record
         span = self._make_span()
         record = _span_to_run_record(span, self._make_definition(), 0, 1, error="connection refused")
         assert record.status == "error"
         assert record.error == "connection refused"
 
     def test_span_to_run_record_trajectory_dicts(self):
-        from monitoring.collector import _span_to_run_record
+        from praktor.monitoring.collector import _span_to_run_record
         span = self._make_span()
         record = _span_to_run_record(span, self._make_definition(), 380, 2, error=None)
         assert len(record.trajectory) == 3
         assert record.trajectory[1]["tool_name"] == "web_search"
 
     def test_span_to_run_record_cached_flag(self):
-        from monitoring.collector import _span_to_run_record
+        from praktor.monitoring.collector import _span_to_run_record
         span = self._make_span()
         record = _span_to_run_record(span, self._make_definition(), 380, 2, error=None)
         assert record.cached is True  # step 3 had cached=True
@@ -398,7 +397,7 @@ class TestCollector:
 class TestGrafanaDashboard:
 
     def setup_method(self):
-        from monitoring.exporters.grafana import build_dashboard
+        from praktor.monitoring.exporters.grafana import build_dashboard
         self.dashboard = build_dashboard()
 
     def test_uid_and_title(self):
@@ -441,7 +440,7 @@ class TestGrafanaDashboard:
         assert self.dashboard["refresh"] == "30s"
 
     def test_custom_datasource(self):
-        from monitoring.exporters.grafana import build_dashboard
+        from praktor.monitoring.exporters.grafana import build_dashboard
         db = build_dashboard(datasource="MyPrometheus")
         # At least one panel should reference the custom datasource
         for panel in db["panels"]:
@@ -502,7 +501,7 @@ class TestMonitoringCLI:
 class TestClosureTrackerReviewQueue:
 
     def _make_tracker(self, tmp_path):
-        from clinical.evaluation.closure_tracker import ClosureTracker
+        from praktor.clinical.evaluation.closure_tracker import ClosureTracker
         return ClosureTracker(db_path=str(tmp_path / "test_closure.db"))
 
     def _insert_rec(self, tracker, priority: float, measure_id: str = "GSD",
@@ -559,26 +558,26 @@ class TestClosureTrackerReviewQueue:
 class TestCollectorScoreHelpers:
 
     def test_score_field_legacy_criteria_dict(self):
-        from monitoring.collector import _score_field
+        from praktor.monitoring.collector import _score_field
         obj = type("JudgeScore", (), {"criteria": {"accuracy": 8.5, "relevance": 7.0}})()
         assert _score_field(obj, "accuracy") == pytest.approx(8.5)
         assert _score_field(obj, "missing") is None
 
     def test_score_field_new_dataclass_attr(self):
-        from monitoring.collector import _score_field
-        from clinical.schemas import ClinicalJudgeScore
+        from praktor.monitoring.collector import _score_field
+        from praktor.clinical.schemas import ClinicalJudgeScore
         score = ClinicalJudgeScore(recommendation_id="x", gap_identification_accuracy=9.0)
         assert _score_field(score, "gap_identification_accuracy") == pytest.approx(9.0)
         assert _score_field(score, "nonexistent") is None
 
     def test_overall_score_legacy_score_attr(self):
-        from monitoring.collector import _overall_score
+        from praktor.monitoring.collector import _overall_score
         obj = type("JudgeScore", (), {"score": 7.5})()
         assert _overall_score(obj) == pytest.approx(7.5)
 
     def test_overall_score_new_overall_attr(self):
-        from monitoring.collector import _overall_score
-        from clinical.schemas import ClinicalJudgeScore
+        from praktor.monitoring.collector import _overall_score
+        from praktor.clinical.schemas import ClinicalJudgeScore
         score = ClinicalJudgeScore(recommendation_id="x", accuracy=10.0, completeness=10.0,
                                    relevance=10.0, conciseness=10.0, clarity=10.0,
                                    gap_identification_accuracy=10.0, action_appropriateness=10.0,
@@ -586,21 +585,21 @@ class TestCollectorScoreHelpers:
         assert _overall_score(score) == pytest.approx(10.0)
 
     def test_overall_score_fallback_default(self):
-        from monitoring.collector import _overall_score
+        from praktor.monitoring.collector import _overall_score
         obj = type("Empty", (), {})()
         assert _overall_score(obj) == pytest.approx(0.0)
 
     @pytest.mark.asyncio
     async def test_record_judge_with_clinical_score(self, tmp_path):
-        from monitoring.collector import record_judge
-        from clinical.schemas import ClinicalJudgeScore
-        from monitoring.registry import MetricsRegistry
-        from monitoring.store import MonitoringStore
+        from praktor.monitoring.collector import record_judge
+        from praktor.clinical.schemas import ClinicalJudgeScore
+        from praktor.monitoring.registry import MetricsRegistry
+        from praktor.monitoring.store import MonitoringStore
 
         store = MonitoringStore(db_path=str(tmp_path / "test.db"))
         registry = MetricsRegistry(store=store)
 
-        import monitoring.registry as reg_mod
+        import praktor.monitoring.registry as reg_mod
         original_get = reg_mod.get_registry
 
         def _mock_get():

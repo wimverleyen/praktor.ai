@@ -2,11 +2,9 @@ import sys
 import asyncio
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent / 'praktor'))
-
 import pytest
-from core.memory import NullMemory
-from memory.buffer import InMemoryBuffer
+from praktor.core.memory import NullMemory
+from praktor.memory.buffer import InMemoryBuffer
 
 
 class TestNullMemory:

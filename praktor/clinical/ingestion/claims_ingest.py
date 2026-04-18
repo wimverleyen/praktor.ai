@@ -26,11 +26,11 @@ from typing import Iterator
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from clinical.data.clinical_store import get_clinical_store
-from clinical.privacy.audit import audit
-from clinical.privacy.deidentifier import get_deidentifier, validate_phi_scrubbed
-from clinical.schemas import ClinicalBrainChunk, hash_member_id
-from settings import create_log
+from praktor.clinical.data.clinical_store import get_clinical_store
+from praktor.clinical.privacy.audit import audit
+from praktor.clinical.privacy.deidentifier import get_deidentifier, validate_phi_scrubbed
+from praktor.clinical.schemas import ClinicalBrainChunk, hash_member_id
+from praktor.settings import create_log
 
 log = create_log()
 

@@ -5,7 +5,7 @@ Generates a production-ready Grafana 10+ dashboard with 6 rows and 14 panels
 covering all praktor monitoring dimensions.
 
 Usage:
-    from monitoring.exporters.grafana import build_dashboard
+    from praktor.monitoring.exporters.grafana import build_dashboard
     import json
     print(json.dumps(build_dashboard(), indent=2))
 

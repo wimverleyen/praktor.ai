@@ -12,18 +12,16 @@ import tempfile
 from pathlib import Path
 from unittest.mock import AsyncMock, patch, MagicMock
 
-sys.path.insert(0, str(Path(__file__).parent.parent / 'praktor'))
-
 import pytest
 from pydantic import BaseModel
 
-from governance.detectors import RegexDetector, DetectionResult, load_detector
-from governance.policy import (
+from praktor.governance.detectors import RegexDetector, DetectionResult, load_detector
+from praktor.governance.policy import (
     GovernancePolicy, PolicyAction, DetectorConfig, AuditSinkType,
     GovernancePolicyViolation,
 )
-from governance.audit import AuditEntry, LocalFileAuditSink, StdoutAuditSink
-from governance.rbac import (
+from praktor.governance.audit import AuditEntry, LocalFileAuditSink, StdoutAuditSink
+from praktor.governance.rbac import (
     issue_token, verify_token, CallerIdentity, RBACError,
     ConfigurationError, _seen_jtis, _seen_jtis_set,
 )
@@ -89,7 +87,7 @@ class TestRegexDetector:
     @pytest.mark.asyncio
     async def test_large_text_chunking(self):
         """Text > MAX_DETECTOR_CHARS should be processed in chunks without dropping matches."""
-        from governance.detectors import MAX_DETECTOR_CHARS
+        from praktor.governance.detectors import MAX_DETECTOR_CHARS
         detector = RegexDetector()
         # Build text just over the limit with an SSN near the start and end
         filler = "x " * (MAX_DETECTOR_CHARS // 2 + 100)
@@ -98,7 +96,7 @@ class TestRegexDetector:
         assert len(results) == 2
 
     def test_load_detector_by_import_path(self):
-        detector = load_detector("governance.detectors.RegexDetector")
+        detector = load_detector("praktor.governance.detectors.RegexDetector")
         assert isinstance(detector, RegexDetector)
 
     def test_load_detector_invalid_path_raises(self):
@@ -272,7 +270,7 @@ class TestRBAC:
 
     def test_expired_token_raises(self):
         import time
-        from governance import rbac as rbac_module
+        from praktor.governance import rbac as rbac_module
         old_ttl = rbac_module.TOKEN_TTL_SECONDS
         rbac_module.TOKEN_TTL_SECONDS = 0  # Instantly expire
         try:
@@ -306,10 +304,10 @@ class TestRouterRBAC:
         _seen_jtis_set.clear()
 
     def test_register_rbac_agent_without_secret_raises(self, monkeypatch):
-        from core.router import Router
-        from governance.rbac import ConfigurationError
+        from praktor.core.router import Router
+        from praktor.governance.rbac import ConfigurationError
 
-        monkeypatch.setattr("core.router.PRAKTOR_RBAC_SECRET", None)
+        monkeypatch.setattr("praktor.core.router.PRAKTOR_RBAC_SECRET", None)
         router = Router()
         defn = _make_protected_definition()
         with pytest.raises(ConfigurationError, match="PRAKTOR_RBAC_SECRET is not set"):
@@ -317,10 +315,10 @@ class TestRouterRBAC:
 
     @pytest.mark.asyncio
     async def test_dispatch_without_token_raises(self, monkeypatch):
-        from core.router import Router
-        from governance.rbac import RBACError
+        from praktor.core.router import Router
+        from praktor.governance.rbac import RBACError
 
-        monkeypatch.setattr("core.router.PRAKTOR_RBAC_SECRET", "secret")
+        monkeypatch.setattr("praktor.core.router.PRAKTOR_RBAC_SECRET", "secret")
         router = Router()
         router.register(_make_protected_definition())
 
@@ -331,10 +329,10 @@ class TestRouterRBAC:
 
     @pytest.mark.asyncio
     async def test_dispatch_with_valid_token_routes(self, monkeypatch):
-        from core.router import Router
+        from praktor.core.router import Router
 
         secret = "test-secret"
-        monkeypatch.setattr("core.router.PRAKTOR_RBAC_SECRET", secret)
+        monkeypatch.setattr("praktor.core.router.PRAKTOR_RBAC_SECRET", secret)
         router = Router()
         router.register(_make_protected_definition())
 
@@ -357,8 +355,8 @@ class TestRouterRBAC:
 
 
 def _make_protected_definition():
-    from core.agent_definition import AgentDefinition
-    from governance.policy import GovernancePolicy
+    from praktor.core.agent_definition import AgentDefinition
+    from praktor.governance.policy import GovernancePolicy
 
     return AgentDefinition(
         name="protected",
@@ -385,14 +383,14 @@ class TestAgentGovernanceHooks:
     @pytest.mark.asyncio
     async def test_pre_execution_block_raises(self, tmp_path):
         """Agent with BLOCK policy raises GovernancePolicyViolation on SSN in payload."""
-        from core.agent import Agent
-        from core.agent_definition import AgentDefinition
-        from governance.policy import GovernancePolicy, DetectorConfig, PolicyAction
+        from praktor.core.agent import Agent
+        from praktor.core.agent_definition import AgentDefinition
+        from praktor.governance.policy import GovernancePolicy, DetectorConfig, PolicyAction
 
         policy = GovernancePolicy(
             pre_execution=[
                 DetectorConfig(
-                    detector_class="governance.detectors.RegexDetector",
+                    detector_class="praktor.governance.detectors.RegexDetector",
                     entities=["US_SSN"],
                     action=PolicyAction.BLOCK,
                 )
@@ -423,9 +421,9 @@ class TestAgentGovernanceHooks:
     @pytest.mark.asyncio
     async def test_pre_execution_flag_passes_through(self, tmp_path):
         """FLAG action lets the call proceed and sets flagged=True in audit entry."""
-        from core.agent import Agent
-        from core.agent_definition import AgentDefinition
-        from governance.policy import GovernancePolicy, DetectorConfig, PolicyAction
+        from praktor.core.agent import Agent
+        from praktor.core.agent_definition import AgentDefinition
+        from praktor.governance.policy import GovernancePolicy, DetectorConfig, PolicyAction
 
         written_entries: list[AuditEntry] = []
 
@@ -436,7 +434,7 @@ class TestAgentGovernanceHooks:
         policy = GovernancePolicy(
             pre_execution=[
                 DetectorConfig(
-                    detector_class="governance.detectors.RegexDetector",
+                    detector_class="praktor.governance.detectors.RegexDetector",
                     entities=["EMAIL_ADDRESS"],
                     action=PolicyAction.FLAG,
                 )
@@ -455,7 +453,7 @@ class TestAgentGovernanceHooks:
             yield "response text"
 
         with patch.object(agent._adapter, "astream", side_effect=_fake_stream):
-            with patch("governance.audit.StdoutAuditSink", return_value=_CaptureSink()):
+            with patch("praktor.governance.audit.StdoutAuditSink", return_value=_CaptureSink()):
                 chunks = []
                 async for chunk in agent.run(
                     {"agent_type": "gov_test", "text": "email alice@example.com", "session_id": ""},
@@ -472,8 +470,8 @@ class TestAgentGovernanceHooks:
     @pytest.mark.asyncio
     async def test_no_governance_policy_passes_through(self):
         """Agent without governance_policy works exactly as before."""
-        from core.agent import Agent
-        from core.agent_definition import AgentDefinition
+        from praktor.core.agent import Agent
+        from praktor.core.agent_definition import AgentDefinition
 
         defn = AgentDefinition(
             name="plain",
@@ -498,16 +496,16 @@ class TestAgentGovernanceHooks:
     @pytest.mark.asyncio
     async def test_pre_execution_redact_scrubs_payload(self, tmp_path):
         """REDACT policy replaces SSN in each payload field before the LLM sees it."""
-        from core.agent import Agent
-        from core.agent_definition import AgentDefinition
-        from governance.policy import GovernancePolicy, DetectorConfig, PolicyAction
+        from praktor.core.agent import Agent
+        from praktor.core.agent_definition import AgentDefinition
+        from praktor.governance.policy import GovernancePolicy, DetectorConfig, PolicyAction
 
         received_payloads: list[dict] = []
 
         policy = GovernancePolicy(
             pre_execution=[
                 DetectorConfig(
-                    detector_class="governance.detectors.RegexDetector",
+                    detector_class="praktor.governance.detectors.RegexDetector",
                     entities=["US_SSN"],
                     action=PolicyAction.REDACT,
                     threshold=0.8,
@@ -528,7 +526,7 @@ class TestAgentGovernanceHooks:
             yield "safe response"
 
         with patch.object(agent._adapter, "astream", side_effect=_capture_stream):
-            with patch("governance.audit.StdoutAuditSink", return_value=MagicMock(write=AsyncMock())):
+            with patch("praktor.governance.audit.StdoutAuditSink", return_value=MagicMock(write=AsyncMock())):
                 chunks = []
                 async for chunk in agent.run(
                     {"agent_type": "gov_test", "text": "Patient SSN is 123-45-6789", "session_id": ""},
@@ -545,14 +543,14 @@ class TestAgentGovernanceHooks:
     @pytest.mark.asyncio
     async def test_post_execution_block_raises(self, tmp_path):
         """BLOCK on post_execution raises after the LLM response contains PHI."""
-        from core.agent import Agent
-        from core.agent_definition import AgentDefinition
-        from governance.policy import GovernancePolicy, DetectorConfig, PolicyAction
+        from praktor.core.agent import Agent
+        from praktor.core.agent_definition import AgentDefinition
+        from praktor.governance.policy import GovernancePolicy, DetectorConfig, PolicyAction
 
         policy = GovernancePolicy(
             post_execution=[
                 DetectorConfig(
-                    detector_class="governance.detectors.RegexDetector",
+                    detector_class="praktor.governance.detectors.RegexDetector",
                     entities=["US_SSN"],
                     action=PolicyAction.BLOCK,
                 )
@@ -572,7 +570,7 @@ class TestAgentGovernanceHooks:
             yield "The SSN is 987-65-4321"
 
         with patch.object(agent._adapter, "astream", side_effect=_leak_ssn):
-            with patch("governance.audit.StdoutAuditSink", return_value=MagicMock(write=AsyncMock())):
+            with patch("praktor.governance.audit.StdoutAuditSink", return_value=MagicMock(write=AsyncMock())):
                 with pytest.raises(GovernancePolicyViolation, match="BLOCK"):
                     async for _ in agent.run(
                         {"agent_type": "gov_test", "text": "clean input", "session_id": ""},
@@ -583,9 +581,9 @@ class TestAgentGovernanceHooks:
     @pytest.mark.asyncio
     async def test_kafka_sink_initializes_without_crash(self):
         """Configuring a KAFKA sink creates KafkaAuditSink. Write failure is graceful."""
-        from core.agent import Agent
-        from core.agent_definition import AgentDefinition
-        from governance.policy import GovernancePolicy, AuditSinkType
+        from praktor.core.agent import Agent
+        from praktor.core.agent_definition import AgentDefinition
+        from praktor.governance.policy import GovernancePolicy, AuditSinkType
 
         policy = GovernancePolicy(audit_sinks=[AuditSinkType.KAFKA])
         defn = AgentDefinition(
@@ -614,10 +612,10 @@ class TestAgentGovernanceHooks:
     @pytest.mark.asyncio
     async def test_audit_entry_written_to_local_file(self, tmp_path):
         """Successful run with LOCAL_FILE sink produces a valid JSONL audit entry."""
-        from core.agent import Agent
-        from core.agent_definition import AgentDefinition
-        from governance.policy import GovernancePolicy, AuditSinkType
-        from governance.audit import LocalFileAuditSink
+        from praktor.core.agent import Agent
+        from praktor.core.agent_definition import AgentDefinition
+        from praktor.governance.policy import GovernancePolicy, AuditSinkType
+        from praktor.governance.audit import LocalFileAuditSink
 
         log_path = str(tmp_path / "audit.jsonl")
 
@@ -636,7 +634,7 @@ class TestAgentGovernanceHooks:
         # Patch LocalFileAuditSink to use tmp_path
         with patch.object(agent._adapter, "astream", side_effect=_fake_stream):
             with patch(
-                "governance.audit.LocalFileAuditSink",
+                "praktor.governance.audit.LocalFileAuditSink",
                 return_value=LocalFileAuditSink(log_path=log_path),
             ):
                 async for _ in agent.run(
@@ -657,16 +655,16 @@ class TestAgentGovernanceHooks:
     @pytest.mark.asyncio
     async def test_audit_entry_written_on_pre_execution_block(self, tmp_path):
         """BLOCK raises GovernancePolicyViolation AND the audit entry is written."""
-        from core.agent import Agent
-        from core.agent_definition import AgentDefinition
-        from governance.policy import GovernancePolicy, DetectorConfig, PolicyAction
+        from praktor.core.agent import Agent
+        from praktor.core.agent_definition import AgentDefinition
+        from praktor.governance.policy import GovernancePolicy, DetectorConfig, PolicyAction
 
         log_path = str(tmp_path / "audit.jsonl")
 
         policy = GovernancePolicy(
             pre_execution=[
                 DetectorConfig(
-                    detector_class="governance.detectors.RegexDetector",
+                    detector_class="praktor.governance.detectors.RegexDetector",
                     entities=["US_SSN"],
                     action=PolicyAction.BLOCK,
                 )
@@ -682,7 +680,7 @@ class TestAgentGovernanceHooks:
         agent = Agent(defn)
 
         with patch(
-            "governance.audit.LocalFileAuditSink",
+            "praktor.governance.audit.LocalFileAuditSink",
             return_value=LocalFileAuditSink(log_path=log_path),
         ):
             with pytest.raises(GovernancePolicyViolation, match="BLOCK"):
@@ -703,15 +701,15 @@ class TestAgentGovernanceHooks:
     @pytest.mark.asyncio
     async def test_memory_saves_redacted_response(self):
         """Post-execution REDACT: memory receives the redacted text, not the original PHI."""
-        from core.agent import Agent
-        from core.agent_definition import AgentDefinition
-        from governance.policy import GovernancePolicy, DetectorConfig, PolicyAction
-        from memory.buffer import InMemoryBuffer
+        from praktor.core.agent import Agent
+        from praktor.core.agent_definition import AgentDefinition
+        from praktor.governance.policy import GovernancePolicy, DetectorConfig, PolicyAction
+        from praktor.memory.buffer import InMemoryBuffer
 
         policy = GovernancePolicy(
             post_execution=[
                 DetectorConfig(
-                    detector_class="governance.detectors.RegexDetector",
+                    detector_class="praktor.governance.detectors.RegexDetector",
                     entities=["US_SSN"],
                     action=PolicyAction.REDACT,
                 )
@@ -732,7 +730,7 @@ class TestAgentGovernanceHooks:
             yield "The patient SSN is 123-45-6789"
 
         with patch.object(agent._adapter, "astream", side_effect=_leak_ssn):
-            with patch("governance.audit.StdoutAuditSink", return_value=MagicMock(write=AsyncMock())):
+            with patch("praktor.governance.audit.StdoutAuditSink", return_value=MagicMock(write=AsyncMock())):
                 chunks = []
                 async for chunk in agent.run(
                     {"agent_type": "gov_test", "text": "clean", "session_id": ""},
@@ -749,14 +747,14 @@ class TestAgentGovernanceHooks:
     @pytest.mark.asyncio
     async def test_governance_runs_in_react_path(self):
         """Post-execution BLOCK fires on ReAct Final Answer containing PHI."""
-        from core.agent import Agent
-        from core.agent_definition import AgentDefinition
-        from governance.policy import GovernancePolicy, DetectorConfig, PolicyAction
+        from praktor.core.agent import Agent
+        from praktor.core.agent_definition import AgentDefinition
+        from praktor.governance.policy import GovernancePolicy, DetectorConfig, PolicyAction
 
         policy = GovernancePolicy(
             post_execution=[
                 DetectorConfig(
-                    detector_class="governance.detectors.RegexDetector",
+                    detector_class="praktor.governance.detectors.RegexDetector",
                     entities=["US_SSN"],
                     action=PolicyAction.BLOCK,
                 )
@@ -773,7 +771,7 @@ class TestAgentGovernanceHooks:
         )
 
         mock_tool = AsyncMock(return_value=MagicMock(ok=True, content="result"))
-        with patch("core.agent.get_tool", return_value=mock_tool):
+        with patch("praktor.core.agent.get_tool", return_value=mock_tool):
             agent = Agent(defn)
 
         # Patch _react_loop to yield a Final Answer containing an SSN
@@ -781,7 +779,7 @@ class TestAgentGovernanceHooks:
             yield "The patient SSN is 987-65-4321"
 
         with patch.object(agent, "_react_loop", side_effect=_fake_react_loop):
-            with patch("governance.audit.StdoutAuditSink", return_value=MagicMock(write=AsyncMock())):
+            with patch("praktor.governance.audit.StdoutAuditSink", return_value=MagicMock(write=AsyncMock())):
                 with pytest.raises(GovernancePolicyViolation, match="BLOCK"):
                     async for _ in agent.run(
                         {"agent_type": "gov_test", "text": "what is the SSN?", "session_id": ""},

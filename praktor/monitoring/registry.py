@@ -6,7 +6,7 @@ data here via monitoring.collector.record_run(). Prometheus and OTel exporters
 read from this registry.
 
 Usage:
-    from monitoring import configure, record_kpi
+    from praktor.monitoring import configure, record_kpi
 
     configure(prometheus_port=8080)   # start Prometheus scrape server
 
@@ -21,8 +21,8 @@ import time
 from collections import defaultdict, deque
 from typing import Any
 
-from monitoring.store import MonitoringStore, KPIRecord, RunRecord
-from settings import create_log
+from praktor.monitoring.store import MonitoringStore, KPIRecord, RunRecord
+from praktor.settings import create_log
 
 log = create_log()
 
@@ -253,7 +253,7 @@ class MetricsRegistry:
         # Cost
         cost_snap = self.cost_usd.snapshot()
         total_cost = sum(cost_snap.values())
-        from monitoring.cost import format_cost
+        from praktor.monitoring.cost import format_cost
         lines.append(f"Cost:   {format_cost(total_cost)} total")
 
         # Latency
@@ -325,12 +325,12 @@ def configure(
         _registry = MetricsRegistry(store=store)
 
     if prometheus_port:
-        from monitoring.exporters.prometheus import start_prometheus_server
+        from praktor.monitoring.exporters.prometheus import start_prometheus_server
         start_prometheus_server(_registry, port=prometheus_port)
         log.info(f"Prometheus metrics available at http://localhost:{prometheus_port}/metrics")
 
     if otel_metrics:
-        from monitoring.exporters.otel import setup_otel_metrics
+        from praktor.monitoring.exporters.otel import setup_otel_metrics
         setup_otel_metrics(_registry)
         log.info("OTel metrics configured")
 
@@ -353,7 +353,7 @@ def record_kpi(
         tags:  Optional label dict for filtering (e.g., {"source": "linkedin"})
 
     Example:
-        from monitoring import record_kpi
+        from praktor.monitoring import record_kpi
         record_kpi("cover_letter_accepted", 1, tags={"source": "linkedin"})
         record_kpi("search_quality", 8.5, tags={"agent": "researcher"})
     """

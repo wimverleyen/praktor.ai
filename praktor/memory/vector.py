@@ -3,7 +3,7 @@ import asyncio
 from pathlib import Path
 from typing import Any
 
-from settings import MODEL, VECTOR_DB, create_log
+from praktor.settings import MODEL, VECTOR_DB, create_log
 
 log = create_log()
 

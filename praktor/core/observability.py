@@ -11,7 +11,7 @@ from opentelemetry.sdk.resources import Resource
 from opentelemetry.trace import StatusCode
 
 from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult
-from settings import PRAKTOR_OTEL_ENABLED, PRAKTOR_OTLP_ENDPOINT, PRAKTOR_OTEL_BACKEND, create_log
+from praktor.settings import PRAKTOR_OTEL_ENABLED, PRAKTOR_OTLP_ENDPOINT, PRAKTOR_OTEL_BACKEND, create_log
 
 log = create_log()
 

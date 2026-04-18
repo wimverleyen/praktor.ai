@@ -4,16 +4,16 @@ praktor.ai monitoring — continuous observability for agentic AI.
 Quick start:
 
     # 1. Configure once at startup (optional — defaults work out of the box)
-    from monitoring import configure
+    from praktor.monitoring import configure
     configure(prometheus_port=8080)   # enables Prometheus scrape server
 
     # 2. Record business KPIs anywhere in your code
-    from monitoring import record_kpi
+    from praktor.monitoring import record_kpi
     record_kpi("cover_letter_accepted", value=1, tags={"source": "linkedin"})
     record_kpi("search_quality",        value=8.5)
 
     # 3. Record judge evaluations
-    from monitoring.collector import record_judge
+    from praktor.monitoring.collector import record_judge
     await record_judge(session_id, agent_type, judge_score_object)
 
     # 4. All agent.run() completions are recorded automatically —
@@ -33,9 +33,10 @@ Environment variables:
     OTEL_METRIC_EXPORT_INTERVAL_MS  OTel push interval (default: 30000)
 """
 
-from monitoring.registry import configure, get_registry, record_kpi
-from monitoring.collector import record_run, record_judge
-from monitoring.store import RunRecord, JudgeEvalRecord, KPIRecord, MonitoringStore
+from praktor.monitoring.registry import configure, get_registry, record_kpi
+from praktor.monitoring.collector import record_run, record_judge
+from praktor.monitoring.store import RunRecord, JudgeEvalRecord, KPIRecord, MonitoringStore
+from praktor.monitoring.governance import record_governance_detection, record_governance_violation, record_governance_dry_run
 
 __all__ = [
     "configure",
@@ -47,4 +48,7 @@ __all__ = [
     "JudgeEvalRecord",
     "KPIRecord",
     "MonitoringStore",
+    "record_governance_detection",
+    "record_governance_violation",
+    "record_governance_dry_run",
 ]

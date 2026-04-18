@@ -7,7 +7,7 @@ so this module is thin: it just re-exports parse_message() for backwards
 compatibility and provides a helper to list all registered schemas.
 """
 
-from core.router import get_global_router
+from praktor.core.router import get_global_router
 
 
 def parse_message(data: dict):

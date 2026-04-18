@@ -3,8 +3,6 @@ import time
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
-sys.path.insert(0, str(Path(__file__).parent.parent / 'praktor'))
-
 import pytest
 
 # ---------------------------------------------------------------------------
@@ -34,7 +32,7 @@ def _make_tracer(mock_span):
 
 class TestTrajectoryEvent:
     def test_fields_stored(self):
-        from core.observability import TrajectoryEvent
+        from praktor.core.observability import TrajectoryEvent
         ev = TrajectoryEvent(
             step=2,
             kind="llm_call",
@@ -52,7 +50,7 @@ class TestTrajectoryEvent:
         assert ev.error is None
 
     def test_tool_name_and_error(self):
-        from core.observability import TrajectoryEvent
+        from praktor.core.observability import TrajectoryEvent
         ev = TrajectoryEvent(
             step=1,
             kind="tool_call",
@@ -72,7 +70,7 @@ class TestSpan:
     def _make_span(self, mock_otel_span=None):
         if mock_otel_span is None:
             mock_otel_span = _make_mock_span()
-        from core.observability import Span, tracer
+        from praktor.core.observability import Span, tracer
         with patch.object(tracer, "start_span", return_value=mock_otel_span):
             span = Span(agent_type="test_agent", session_id="sess-1", model="qwen2.5")
         span._otel_span = mock_otel_span
@@ -86,7 +84,7 @@ class TestSpan:
     def test_finish_success_emits_log(self, caplog):
         import logging
         span, mock_otel = self._make_span()
-        with patch("core.observability.log") as mock_log:
+        with patch("praktor.core.observability.log") as mock_log:
             span.finish(token_count=42, passes=2)
         mock_log.info.assert_called_once()
         log_msg = mock_log.info.call_args[0][0]
@@ -96,7 +94,7 @@ class TestSpan:
 
     def test_finish_error_logs_at_error_level(self):
         span, mock_otel = self._make_span()
-        with patch("core.observability.log") as mock_log:
+        with patch("praktor.core.observability.log") as mock_log:
             span.finish(error="something broke")
         mock_log.error.assert_called_once()
         log_msg = mock_log.error.call_args[0][0]
@@ -125,7 +123,7 @@ class TestSpan:
         assert status_arg == StatusCode.ERROR
 
     def test_trajectory_events_attached_as_span_events(self):
-        from core.observability import TrajectoryEvent
+        from praktor.core.observability import TrajectoryEvent
         span, mock_otel = self._make_span()
         span._record_trajectory(TrajectoryEvent(step=1, kind="llm_call", latency_ms=50.0))
         span._record_trajectory(TrajectoryEvent(step=2, kind="improvement_pass", latency_ms=70.0))
@@ -133,7 +131,7 @@ class TestSpan:
         assert mock_otel.add_event.call_count == 2
 
     def test_trajectory_capped_at_128(self):
-        from core.observability import TrajectoryEvent
+        from praktor.core.observability import TrajectoryEvent
         span, mock_otel = self._make_span()
         for i in range(200):
             span._record_trajectory(TrajectoryEvent(step=i, kind="llm_call", latency_ms=1.0))
@@ -142,10 +140,10 @@ class TestSpan:
 
     def test_json_log_includes_trajectory_steps(self):
         import json
-        from core.observability import TrajectoryEvent
+        from praktor.core.observability import TrajectoryEvent
         span, _ = self._make_span()
         span._record_trajectory(TrajectoryEvent(step=1, kind="llm_call", latency_ms=30.0))
-        with patch("core.observability.log") as mock_log:
+        with patch("praktor.core.observability.log") as mock_log:
             span.finish(token_count=10)
         log_msg = mock_log.info.call_args[0][0]
         record = json.loads(log_msg.replace("SPAN ", ""))
@@ -158,7 +156,7 @@ class TestSpan:
 
 class TestLLMCallSpan:
     def _make_call_span(self, pass_number=1, kind="llm_call", tool_name=None):
-        from core.observability import Span, LLMCallSpan, tracer
+        from praktor.core.observability import Span, LLMCallSpan, tracer
         mock_parent_otel = _make_mock_span()
         mock_child_otel = _make_mock_span()
 
@@ -229,14 +227,14 @@ class TestAgentRunTrajectory:
             "langchain_ollama": MagicMock(),
             "langchain_ollama.llms": MagicMock(),
         }):
-            with patch("LLM.llm_factory.LLMFactory") as mock_factory:
+            with patch("praktor.LLM.llm_factory.LLMFactory") as mock_factory:
                 mock_factory.return_value.create_llm.return_value = MagicMock()
 
-                import importlib, LLM.llm_interface as lli
+                import importlib, praktor.LLM.llm_interface as lli
                 importlib.reload(lli)
 
-                from core.agent_definition import AgentDefinition, MemoryPolicy
-                from core.observability import Span, tracer
+                from praktor.core.agent_definition import AgentDefinition, MemoryPolicy
+                from praktor.core.observability import Span, tracer
 
                 definition = AgentDefinition(
                     name="traj_agent",
@@ -253,10 +251,10 @@ class TestAgentRunTrajectory:
                         call_span.output_tokens = 5
                     yield "hello world"
 
-                with patch("core.observability.tracer") as mock_tracer:
+                with patch("praktor.core.observability.tracer") as mock_tracer:
                     mock_tracer.start_span.return_value = mock_otel
 
-                    import core.agent as agent_mod
+                    import praktor.core.agent as agent_mod
                     importlib.reload(agent_mod)
                     agent = agent_mod.Agent(definition)
                     agent._adapter.astream = _fake_astream

@@ -3,9 +3,9 @@ from __future__ import annotations
 import json
 from typing import AsyncGenerator
 
-from core.agent import Agent
-from core.agent_definition import AgentDefinition
-from settings import PRAKTOR_RBAC_SECRET, new_request_id, create_log
+from praktor.core.agent import Agent
+from praktor.core.agent_definition import AgentDefinition
+from praktor.settings import PRAKTOR_RBAC_SECRET, new_request_id, create_log
 
 log = create_log()
 
@@ -39,7 +39,7 @@ class Router:
         - rbac_required_roles is non-empty AND PRAKTOR_RBAC_SECRET is absent.
         Fail-closed at startup, not at request time.
         """
-        from governance.rbac import ConfigurationError
+        from praktor.governance.rbac import ConfigurationError
 
         if definition.governance_policy:
             policy = definition.governance_policy
@@ -74,7 +74,7 @@ class Router:
             RBACError:  invalid/expired/replayed token, missing required role
             GovernancePolicyViolation: pre-execution policy BLOCK
         """
-        from governance.rbac import verify_token, RBACError
+        from praktor.governance.rbac import verify_token, RBACError
 
         data = json.loads(raw)
         agent_type = data.get("agent_type")

@@ -14,7 +14,6 @@ import pytest
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "praktor"))
 
 
 # ---------------------------------------------------------------------------
@@ -24,7 +23,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "praktor"))
 class TestDeidentifier:
 
     def setup_method(self):
-        from clinical.privacy.deidentifier import Deidentifier
+        from praktor.clinical.privacy.deidentifier import Deidentifier
         self.deidentifier = Deidentifier()
 
     def test_empty_string_returns_empty(self):
@@ -87,18 +86,18 @@ class TestDeidentifier:
 class TestPHIGate:
 
     def test_phi_scrubbed_true_passes(self):
-        from clinical.privacy.deidentifier import validate_phi_scrubbed
+        from praktor.clinical.privacy.deidentifier import validate_phi_scrubbed
         # Must not raise
         validate_phi_scrubbed(True, context="test")
 
     def test_phi_scrubbed_false_raises(self):
-        from clinical.privacy.deidentifier import validate_phi_scrubbed
+        from praktor.clinical.privacy.deidentifier import validate_phi_scrubbed
         with pytest.raises(ValueError, match="PHI gate violation"):
             validate_phi_scrubbed(False, context="test")
 
     def test_phi_gate_raises_not_logs(self):
         """Gate must raise — logging and continuing is not acceptable."""
-        from clinical.privacy.deidentifier import validate_phi_scrubbed
+        from praktor.clinical.privacy.deidentifier import validate_phi_scrubbed
         raised = False
         try:
             validate_phi_scrubbed(False)
@@ -108,8 +107,8 @@ class TestPHIGate:
 
     def test_member_brain_rejects_unscrubbed_chunk(self, tmp_path):
         """MemberBrain.add_chunk raises if phi_scrubbed=False."""
-        from clinical.memory.member_brain import MemberBrain
-        from clinical.schemas import ClinicalBrainChunk
+        from praktor.clinical.memory.member_brain import MemberBrain
+        from praktor.clinical.schemas import ClinicalBrainChunk
 
         brain = MemberBrain(base_dir=str(tmp_path))
 
@@ -126,8 +125,8 @@ class TestPHIGate:
 
     def test_member_brain_accepts_scrubbed_chunk_when_embeddings_unavailable(self, tmp_path):
         """Gate passes when phi_scrubbed=True (embeddings may be unavailable in tests)."""
-        from clinical.memory.member_brain import MemberBrain
-        from clinical.schemas import ClinicalBrainChunk
+        from praktor.clinical.memory.member_brain import MemberBrain
+        from praktor.clinical.schemas import ClinicalBrainChunk
 
         brain = MemberBrain(base_dir=str(tmp_path))
         # Disable embeddings so we test gate logic without Ollama
@@ -151,30 +150,30 @@ class TestPHIGate:
 class TestMemberIDHashing:
 
     def test_hash_is_deterministic(self):
-        from clinical.schemas import hash_member_id
+        from praktor.clinical.schemas import hash_member_id
         h1 = hash_member_id("MEMBER-12345")
         h2 = hash_member_id("MEMBER-12345")
         assert h1 == h2
 
     def test_hash_is_64_chars(self):
-        from clinical.schemas import hash_member_id
+        from praktor.clinical.schemas import hash_member_id
         h = hash_member_id("MEMBER-12345")
         assert len(h) == 64
 
     def test_different_ids_produce_different_hashes(self):
-        from clinical.schemas import hash_member_id
+        from praktor.clinical.schemas import hash_member_id
         h1 = hash_member_id("MEMBER-12345")
         h2 = hash_member_id("MEMBER-12346")
         assert h1 != h2
 
     def test_raw_id_not_present_in_hash(self):
-        from clinical.schemas import hash_member_id
+        from praktor.clinical.schemas import hash_member_id
         raw = "MEMBER-99999"
         hashed = hash_member_id(raw)
         assert raw not in hashed
 
     def test_short_id_is_prefix_of_full_hash(self):
-        from clinical.schemas import hash_member_id, short_id
+        from praktor.clinical.schemas import hash_member_id, short_id
         full = hash_member_id("MEMBER-12345")
         short = short_id(full)
         assert full.startswith(short)
@@ -188,7 +187,7 @@ class TestMemberIDHashing:
 class TestHEDISGap:
 
     def test_priority_score_triple_weighted_ranks_higher(self):
-        from clinical.schemas import HEDISGap
+        from praktor.clinical.schemas import HEDISGap
 
         triple = HEDISGap(
             member_id_hash="abc", measure_id="MAC",
@@ -204,7 +203,7 @@ class TestHEDISGap:
         assert triple.priority_score > single.priority_score
 
     def test_pdc_gap_calculated_correctly(self):
-        from clinical.schemas import HEDISGap
+        from praktor.clinical.schemas import HEDISGap
 
         gap = HEDISGap(
             member_id_hash="abc", measure_id="MAC",
@@ -215,7 +214,7 @@ class TestHEDISGap:
         assert abs(gap.pdc_gap - 0.08) < 0.001
 
     def test_pdc_gap_none_when_pdc_current_none(self):
-        from clinical.schemas import HEDISGap
+        from praktor.clinical.schemas import HEDISGap
 
         gap = HEDISGap(
             member_id_hash="abc", measure_id="BCS",
@@ -225,7 +224,7 @@ class TestHEDISGap:
         assert gap.pdc_gap is None
 
     def test_days_remaining_zero_handled(self):
-        from clinical.schemas import HEDISGap
+        from praktor.clinical.schemas import HEDISGap
 
         gap = HEDISGap(
             member_id_hash="abc", measure_id="MAC",

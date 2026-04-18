@@ -4,9 +4,9 @@ from langchain_ollama.llms import OllamaLLM
 from langchain_community.vectorstores import FAISS
 
 #from LLM.llm_factory import LLM
-from LLM.prompt import PromptSearch, PromptEmailThankYou
+from praktor.LLM.prompt import PromptSearch, PromptEmailThankYou
 
-from settings import create_log, MODEL, VECTOR_DB
+from praktor.settings import create_log, MODEL, VECTOR_DB
 
 from typing import Dict, List
 from operator import itemgetter

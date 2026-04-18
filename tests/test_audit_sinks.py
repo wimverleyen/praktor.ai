@@ -11,9 +11,8 @@ import pytest
 
 import sys
 import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "praktor"))
 
-from governance.audit import AuditEntry
+from praktor.governance.audit import AuditEntry
 
 
 # ---------------------------------------------------------------------------
@@ -44,7 +43,7 @@ class TestKafkaAuditSink:
     @pytest.mark.asyncio
     async def test_write_sends_to_kafka(self, mock_producer, entry):
         """Successful write sends serialized entry to the configured topic."""
-        from governance.audit_kafka import KafkaAuditSink
+        from praktor.governance.audit_kafka import KafkaAuditSink
 
         sink = KafkaAuditSink(topic="test-topic", brokers="localhost:9092")
         # Inject the mock producer directly
@@ -60,7 +59,7 @@ class TestKafkaAuditSink:
     @pytest.mark.asyncio
     async def test_write_retries_on_failure(self, mock_producer, entry):
         """Transient failures trigger retries with backoff."""
-        from governance.audit_kafka import KafkaAuditSink
+        from praktor.governance.audit_kafka import KafkaAuditSink
 
         sink = KafkaAuditSink(topic="test-topic", brokers="localhost:9092")
         sink._producer = mock_producer
@@ -78,7 +77,7 @@ class TestKafkaAuditSink:
     @pytest.mark.asyncio
     async def test_write_logs_error_after_max_retries(self, mock_producer, entry):
         """After max retries, logs error but does not crash."""
-        from governance.audit_kafka import KafkaAuditSink
+        from praktor.governance.audit_kafka import KafkaAuditSink
 
         sink = KafkaAuditSink(topic="test-topic", brokers="localhost:9092")
         sink._producer = mock_producer
@@ -93,7 +92,7 @@ class TestKafkaAuditSink:
     @pytest.mark.asyncio
     async def test_close_stops_producer(self, mock_producer):
         """close() stops the producer cleanly."""
-        from governance.audit_kafka import KafkaAuditSink
+        from praktor.governance.audit_kafka import KafkaAuditSink
 
         sink = KafkaAuditSink()
         sink._producer = mock_producer
@@ -130,7 +129,7 @@ class TestMinIOAuditSink:
     @pytest.mark.asyncio
     async def test_write_puts_object_to_minio(self, mock_client, entry):
         """Successful write stores JSON object with correct key schema."""
-        from governance.audit_minio import MinIOAuditSink
+        from praktor.governance.audit_minio import MinIOAuditSink
 
         sink = MinIOAuditSink(bucket="test-bucket")
         sink._client = mock_client
@@ -149,7 +148,7 @@ class TestMinIOAuditSink:
     @pytest.mark.asyncio
     async def test_auto_creates_bucket(self, mock_client, entry):
         """Auto-creates bucket if it does not exist."""
-        from governance.audit_minio import MinIOAuditSink
+        from praktor.governance.audit_minio import MinIOAuditSink
 
         mock_client.bucket_exists.return_value = False
 
@@ -164,7 +163,7 @@ class TestMinIOAuditSink:
     @pytest.mark.asyncio
     async def test_write_failure_does_not_crash(self, mock_client, entry):
         """Write failure logs error but does not raise."""
-        from governance.audit_minio import MinIOAuditSink
+        from praktor.governance.audit_minio import MinIOAuditSink
 
         mock_client.put_object.side_effect = Exception("disk full")
 
@@ -178,7 +177,7 @@ class TestMinIOAuditSink:
     @pytest.mark.asyncio
     async def test_bucket_check_cached_after_first_write(self, mock_client, entry):
         """Bucket existence check only runs once, then cached."""
-        from governance.audit_minio import MinIOAuditSink
+        from praktor.governance.audit_minio import MinIOAuditSink
 
         sink = MinIOAuditSink(bucket="test-bucket")
         sink._client = mock_client

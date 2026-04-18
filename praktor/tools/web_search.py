@@ -1,7 +1,7 @@
 from __future__ import annotations
 import asyncio
-from core.tool import ToolResult, register_tool
-from settings import create_log
+from praktor.core.tool import ToolResult, register_tool
+from praktor.settings import create_log
 
 log = create_log()
 

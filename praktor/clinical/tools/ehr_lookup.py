@@ -14,8 +14,8 @@ from __future__ import annotations
 
 import json
 
-from core.tool import ToolResult, register_tool
-from settings import create_log
+from praktor.core.tool import ToolResult, register_tool
+from praktor.settings import create_log
 
 log = create_log()
 
@@ -39,7 +39,7 @@ class EHRLookupTool:
             data_type = params.get("data_type", "all").lower()
             test_name = params.get("test_name")
 
-            from clinical.data.clinical_store import get_clinical_store
+            from praktor.clinical.data.clinical_store import get_clinical_store
             store = get_clinical_store()
 
             parts: list[str] = []
