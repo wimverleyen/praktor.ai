@@ -43,6 +43,24 @@ st.set_page_config(
 )
 
 # ---------------------------------------------------------------------------
+# Agent Skills sidebar metadata
+# ---------------------------------------------------------------------------
+
+DEFAULT_TOOLS = [
+    "gap_registry", "drug_adherence", "claims_lookup", "ehr_lookup",
+    "sdoh_lookup", "outreach_history", "measure_criteria",
+]
+TOOL_META = {
+    "gap_registry":     ("🏥", "Ranked open HEDIS gaps by STARS impact"),
+    "drug_adherence":   ("💊", "PDC scores vs 0.80 threshold"),
+    "claims_lookup":    ("📋", "Historical claims and service events"),
+    "ehr_lookup":       ("🩺", "EHR diagnoses, A1c trend, prescriptions"),
+    "sdoh_lookup":      ("🏘️", "Language, barriers, PCP info, pharmacy"),
+    "outreach_history": ("📞", "Prior outreach attempts and responses"),
+    "measure_criteria": ("📐", "HEDIS measure exclusion criteria"),
+}
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
@@ -343,6 +361,9 @@ def tab_predict():
                               help="No LLM call — uses pre-defined demo responses")
 
     run_btn = st.button("▶ Run agent", key="pred_run", type="primary", use_container_width=True)
+    active = st.session_state.get("agent_tools", DEFAULT_TOOLS)
+    if set(active) != set(DEFAULT_TOOLS):
+        st.caption(f"Active tools: {len(active)} / {len(DEFAULT_TOOLS)} — edit in sidebar")
 
     if run_btn:
         is_diabetes = agent_choice.startswith("Diabetes")
@@ -352,6 +373,8 @@ def tab_predict():
             cmd.append("--dry-run")
         if member_idx is not None:
             cmd += ["--member", str(member_idx)]
+        if set(active) != set(DEFAULT_TOOLS):
+            cmd += ["--tools", ",".join(active)]
 
         env = {**os.environ, "PYTHONPATH": "praktor"}
 
@@ -1140,6 +1163,36 @@ def tab_tracer():
 # Sidebar
 # ---------------------------------------------------------------------------
 
+def _agent_skills_sidebar():
+    has_override = any(
+        not st.session_state.get(f"tool_{n}", True) for n in DEFAULT_TOOLS
+    )
+    with st.expander("🧠 Agent Skills", expanded=has_override):
+        if st.button("↺ Reset", key="tool_reset"):
+            for name in DEFAULT_TOOLS:
+                st.session_state[f"tool_{name}"] = True
+            st.rerun()
+
+        for name in DEFAULT_TOOLS:
+            emoji, desc = TOOL_META[name]
+            c1, c2, c3 = st.columns([1, 4, 1])
+            c1.write(emoji)
+            c2.markdown(f"**{name}**")
+            c2.caption(desc)
+            c3.checkbox("", key=f"tool_{name}", value=True, label_visibility="collapsed")
+
+        active = [n for n in DEFAULT_TOOLS if st.session_state.get(f"tool_{n}", True)]
+        if not active:
+            st.error("Select at least one tool")
+            st.session_state["tool_gap_registry"] = True
+            active = [n for n in DEFAULT_TOOLS if st.session_state.get(f"tool_{n}", True)]
+
+        if not st.session_state.get("tool_gap_registry", True):
+            st.warning("⚠️ Without gap_registry the agent always escalates")
+
+        st.session_state["agent_tools"] = active
+
+
 def _sidebar():
     with st.sidebar:
         st.markdown("### 🏥 praktor.ai Clinical")
@@ -1175,6 +1228,8 @@ def _sidebar():
         st.caption("🟢 MAC — Statin adherence (3x)")
         st.caption("🟢 MAD — Diabetes meds (3x)")
         st.caption("🟢 MAP — RASA hypertension (3x)")
+        st.divider()
+        _agent_skills_sidebar()
 
 
 # ---------------------------------------------------------------------------

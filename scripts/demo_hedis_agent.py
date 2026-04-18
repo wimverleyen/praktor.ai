@@ -150,6 +150,7 @@ async def run_member(
     model: str,
     dry_run: bool,
     measurement_year: int,
+    active_tools: list[str] | None = None,
 ) -> dict | None:
     """Run one member through the HEDIS gap agent."""
     from core.agent import Agent
@@ -168,6 +169,8 @@ async def run_member(
         print(f"    {_stars_label(g['stars_weight'])} {g['measure_id']}: {g['measure_name']}{pdc}")
 
     defn = dataclasses.replace(HEDISGapDefinition, llm_model=model)
+    if active_tools:
+        defn = dataclasses.replace(defn, tools=active_tools)
     agent = Agent(defn)
 
     if dry_run:
@@ -220,12 +223,14 @@ async def main_async(args) -> None:
     seed_demo(verbose=False)
     print(f"{_GREEN}✓ Demo data ready{_RESET}")
 
+    active_tools = [t.strip() for t in args.tools.split(",") if t.strip()] if args.tools else None
+
     members_to_run = [args.member] if args.member is not None else range(len(DEMO_MEMBERS))
 
     actions = []
     for i in members_to_run:
         action = await run_member(
-            i, args.model, args.dry_run, YEAR
+            i, args.model, args.dry_run, YEAR, active_tools
         )
         if action:
             actions.append(action)
@@ -251,6 +256,8 @@ def main():
     parser.add_argument("--dry-run", action="store_true", help="Skip LLM calls (instant demo)")
     parser.add_argument("--member", type=int, default=None,
                         help="Run single member by index 0-4 (default: all)")
+    parser.add_argument("--tools", default="",
+                        help="Comma-separated active tool names (default: all)")
     args = parser.parse_args()
     asyncio.run(main_async(args))
 
