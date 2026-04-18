@@ -99,6 +99,36 @@ class GovernancePolicy:
                     f"Must be AuditSinkType enum. Got {type(sink).__name__}."
                 )
 
+    def to_obligation_bundle(self) -> "ObligationBundle":
+        """
+        Convert this GovernancePolicy to an ObligationBundle (Decision 11A).
+
+        Mapping:
+            pre_execution / post_execution detectors  → O2DataConfinement
+            evaluation_passes (any judge)             → O3ContentSafety
+            audit_sinks (always present)              → O7Auditable
+        """
+        from praktor.aigov.bundle import ObligationBundle
+        from praktor.aigov.obligations.o7_auditable import O7Auditable
+
+        obligations = []
+
+        if self.pre_execution or self.post_execution:
+            from praktor.aigov.obligations.o2_data_confinement import O2DataConfinement
+            obligations.append(O2DataConfinement())
+
+        if self.evaluation_passes:
+            from praktor.aigov.obligations.o3_content_safety import O3ContentSafety
+            obligations.append(O3ContentSafety())
+
+        obligations.append(O7Auditable())
+
+        return ObligationBundle(
+            obligations=obligations,
+            bundle_id="governance_policy_shim",
+            description="Auto-converted from GovernancePolicy (backward-compat shim)",
+        )
+
 
 class GovernancePolicyViolation(Exception):
     """

@@ -7,7 +7,10 @@ from typing import TYPE_CHECKING
 
 from pydantic import BaseModel
 
+from praktor.aigov.event import AgentPattern
+
 if TYPE_CHECKING:
+    from praktor.aigov.bundle import ObligationBundle
     from praktor.governance.policy import GovernancePolicy
 
 
@@ -102,8 +105,36 @@ class AgentDefinition:
     Default None = governance disabled. Backwards compatible with all existing agents.
     """
 
+    agent_pattern: AgentPattern = AgentPattern.B1
+    """
+    AIGov §7 behavioral pattern classification (B1-B7). Written into every
+    ObligationEvent so the Scoreboard can group agents by risk profile.
+
+    Default B1 (simple retrieval-augmented QA). Override for:
+        B3 — ReAct tool-use loop (max_steps > 1 with tools)
+        B4 — Multi-agent orchestrator
+        B5 — Human-in-the-loop supervised
+        B6 — Autonomous long-horizon task
+    """
+
+    obligation_bundle: ObligationBundle | None = None
+    """
+    AIGov obligation bundle for this agent. When set, obligation checks are
+    run at G-RUN and results emitted to the ledger. Replaces governance_policy
+    as the primary compliance abstraction (Decision 2A).
+
+    If obligation_bundle is None and governance_policy is set, __post_init__
+    auto-converts governance_policy to an ObligationBundle via the shim
+    (Decision 11A). obligation_bundle always wins if both are provided.
+    """
+
     def __post_init__(self) -> None:
         template_bytes = self.prompt_template.encode("utf-8", errors="replace")
         self.prompt_template_hash = hashlib.sha256(template_bytes).hexdigest()
         if not self.prompt_version:
             self.prompt_version = self.prompt_template_hash[:12]
+
+        # Decision 2A: auto-convert governance_policy → obligation_bundle when
+        # obligation_bundle is not explicitly set.
+        if self.obligation_bundle is None and self.governance_policy is not None:
+            self.obligation_bundle = self.governance_policy.to_obligation_bundle()
