@@ -20,8 +20,8 @@ Metric catalogue:
     praktor_kpi{name, ...tags}                               gauge (latest value)
 
 Usage:
-    from monitoring.exporters.prometheus import start_prometheus_server
-    from monitoring.registry import get_registry
+    from praktor.monitoring.exporters.prometheus import start_prometheus_server
+    from praktor.monitoring.registry import get_registry
     start_prometheus_server(get_registry(), port=8080)
 
     # Metrics then available at http://localhost:8080/metrics
@@ -33,7 +33,7 @@ import threading
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from monitoring.registry import MetricsRegistry
+    from praktor.monitoring.registry import MetricsRegistry
 
 
 def start_prometheus_server(registry: "MetricsRegistry", port: int = 8080) -> None:

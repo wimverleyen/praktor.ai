@@ -3,8 +3,6 @@ import asyncio
 from pathlib import Path
 from unittest.mock import patch, MagicMock, AsyncMock
 
-sys.path.insert(0, str(Path(__file__).parent.parent / 'praktor'))
-
 import pytest
 
 
@@ -12,10 +10,10 @@ class TestAsyncLLMAdapter:
     """Tests for AsyncLLMAdapter — mocks LLMFactory to avoid needing Ollama."""
 
     def _make_adapter(self, template="Answer: {question}", model="qwen2.5"):
-        with patch("LLM.llm_interface.LLMFactory") as mock_factory_cls:
+        with patch("praktor.LLM.llm_interface.LLMFactory") as mock_factory_cls:
             mock_llm = MagicMock()
             mock_factory_cls.return_value.create_llm.return_value = mock_llm
-            from LLM.llm_interface import AsyncLLMAdapter
+            from praktor.LLM.llm_interface import AsyncLLMAdapter
             adapter = AsyncLLMAdapter(prompt_template=template, model=model)
             adapter._llm = mock_llm
             return adapter, mock_llm
@@ -24,7 +22,9 @@ class TestAsyncLLMAdapter:
     async def test_ainvoke_returns_string(self):
         adapter, mock_llm = self._make_adapter()
 
-        with patch("LLM.llm_interface._invoke_with_retry", new_callable=AsyncMock) as mock_retry:
+        with patch("praktor.LLM.llm_interface._invoke_with_retry", new_callable=AsyncMock) as mock_retry, \
+             patch("praktor.LLM.llm_interface._cache") as mock_cache:
+            mock_cache.get.return_value = None
             mock_retry.return_value = "Paris is the capital of France."
             result = await adapter.ainvoke({"question": "Capital of France?"})
 
@@ -42,8 +42,8 @@ class TestAsyncLLMAdapter:
         def _cache_set(key, value, **kwargs):
             fresh_cache[key] = value
 
-        with patch("LLM.llm_interface._invoke_with_retry", new_callable=AsyncMock) as mock_retry, \
-             patch("LLM.llm_interface._cache") as mock_cache:
+        with patch("praktor.LLM.llm_interface._invoke_with_retry", new_callable=AsyncMock) as mock_retry, \
+             patch("praktor.LLM.llm_interface._cache") as mock_cache:
             mock_cache.get.side_effect = _cache_get
             mock_cache.set.side_effect = _cache_set
             mock_retry.return_value = "Cached response"
@@ -83,7 +83,9 @@ class TestAsyncLLMAdapter:
         adapter._chain = MagicMock()
         adapter._chain.astream = _fail_astream
 
-        with patch("LLM.llm_interface._invoke_with_retry", new_callable=AsyncMock) as mock_retry:
+        with patch("praktor.LLM.llm_interface._invoke_with_retry", new_callable=AsyncMock) as mock_retry, \
+             patch("praktor.LLM.llm_interface._cache") as mock_cache:
+            mock_cache.get.return_value = None
             mock_retry.return_value = "Fallback response"
             chunks = []
             async for chunk in adapter.astream({"question": "Test?"}):
@@ -93,9 +95,9 @@ class TestAsyncLLMAdapter:
 
     @pytest.mark.asyncio
     async def test_cache_disabled_for_nonzero_temperature(self):
-        with patch("LLM.llm_interface.LLMFactory") as mock_factory_cls:
+        with patch("praktor.LLM.llm_interface.LLMFactory") as mock_factory_cls:
             mock_factory_cls.return_value.create_llm.return_value = MagicMock()
-            from LLM.llm_interface import AsyncLLMAdapter
+            from praktor.LLM.llm_interface import AsyncLLMAdapter
             adapter = AsyncLLMAdapter(
                 prompt_template="Answer: {question}",
                 model="qwen2.5",

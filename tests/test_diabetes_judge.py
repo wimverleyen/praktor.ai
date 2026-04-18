@@ -14,12 +14,11 @@ from unittest.mock import patch
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "praktor"))
 
 
 def _make_judge():
-    from clinical.evaluation.diabetes_hedis_judge import DiabetesHEDISJudge
-    with patch("clinical.evaluation.base_judge.BaseJudge._init_adapters"):
+    from praktor.clinical.evaluation.diabetes_hedis_judge import DiabetesHEDISJudge
+    with patch("praktor.clinical.evaluation.base_judge.BaseJudge._init_adapters"):
         j = DiabetesHEDISJudge()
     return j
 
@@ -27,7 +26,7 @@ def _make_judge():
 class TestDiabetesJudgeScore:
 
     def _score(self, **kwargs):
-        from clinical.schemas import DiabetesJudgeScore
+        from praktor.clinical.schemas import DiabetesJudgeScore
         return DiabetesJudgeScore(recommendation_id="test", **kwargs)
 
     def test_base_overall_is_mean_of_5_base(self):
@@ -54,12 +53,12 @@ class TestDiabetesJudgeScore:
         assert s.overall == pytest.approx(10.0)
 
     def test_overall_default_is_5(self):
-        from clinical.schemas import DiabetesJudgeScore
+        from praktor.clinical.schemas import DiabetesJudgeScore
         s = DiabetesJudgeScore(recommendation_id="x")
         assert s.overall == pytest.approx(5.0)
 
     def test_summary_contains_overall(self):
-        from clinical.schemas import DiabetesJudgeScore
+        from praktor.clinical.schemas import DiabetesJudgeScore
         s = DiabetesJudgeScore(recommendation_id="x")
         summary = s.summary()
         assert "overall=" in summary
@@ -80,7 +79,7 @@ class TestDiabetesHEDISJudgeParseScore:
             '"gap_stacking_completeness": 6.5, "evidence_anchor_quality": 9.0, '
             '"safety_exclusion_coverage": 8.0, "reasoning": "good escalation"}'
         )
-        from clinical.schemas import DiabetesJudgeScore
+        from praktor.clinical.schemas import DiabetesJudgeScore
         score = self.judge._parse_score(raw, "rec")
         assert isinstance(score, DiabetesJudgeScore)
         assert score.accuracy == pytest.approx(8.0)

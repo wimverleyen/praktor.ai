@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.4.0] - 2026-04-18 — Governance DX: block_pii(), RegexEntities, py.typed
+
+### Added
+
+- **`block_pii(definition, entities, action="block")`** — one-liner convenience function in `praktor.governance`; returns a new `AgentDefinition` with a pre-execution `GovernancePolicy` configured. Original definition is never mutated.
+- **`RegexEntities` constants** — named string constants (`US_SSN`, `EMAIL_ADDRESS`, `PHONE_NUMBER`, `DATE_OF_BIRTH`, `US_PASSPORT`, `CREDIT_CARD`) on `praktor.governance.detectors.RegexDetector`; eliminates magic strings in detector config.
+- **`DetectorConfig` accepts class directly** — `detector_class` field now accepts `type | str`; `__post_init__` coerces to fully-qualified name (`module.qualname`). Existing string configs unchanged.
+- **`GovernancePolicyViolation.__str__` doc URL** — violation messages now include `See: https://github.com/wimverleyen/praktor.ai#governance-quickstart` for faster developer triage.
+- **Unknown entity warning** — `RegexDetector` logs `WARNING` (not exception) when an entity name is not in `_PATTERNS`; detection skipped for that entity, others continue.
+- **`praktor/py.typed`** — PEP 561 marker; enables mypy/pyright inference for downstream consumers.
+- **`praktor.monitoring.governance`** — `record_governance_detection`, `record_governance_violation`, `record_governance_dry_run` KPI helpers wired into agent governance hooks.
+- **`python -m praktor demo-governance`** CLI subcommand — runs `scripts/demo_governance.py` detector demo without Ollama; `--model` flag for full agent path.
+- **`docs/governance.md`** — full governance reference (detectors, policies, audit sinks, RBAC, evaluators).
+- **25 DX smoke tests** in `tests/test_governance_dx.py` covering all new API surface.
+
+### Changed
+
+- All `praktor/` source files: bare `from X import` → `from praktor.X import` (absolute packaging fix; 71 files). No logic changes.
+- Governance quickstart moved to top third of README with working code examples and expected output.
+
 ## [0.3.0.0] - 2026-04-18 — Phase 3: Governance Wiring + Evaluation Integration
 
 ### Added

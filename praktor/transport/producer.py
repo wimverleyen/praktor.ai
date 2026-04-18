@@ -3,7 +3,7 @@ from __future__ import annotations
 Async RabbitMQ producer.
 
 Usage:
-    from transport.producer import publish
+    from praktor.transport.producer import publish
 
     await publish({"agent_type": "thank_you", "adjective": "professional", ...})
 """
@@ -11,7 +11,7 @@ Usage:
 import aio_pika
 from json import dumps
 
-from settings import RABBITMQ_URL, new_request_id, create_log
+from praktor.settings import RABBITMQ_URL, new_request_id, create_log
 
 log = create_log()
 

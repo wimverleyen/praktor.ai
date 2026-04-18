@@ -13,12 +13,11 @@ from unittest.mock import patch
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "praktor"))
 
 
 def _make_judge():
-    from clinical.evaluation.hedis_judge import HEDISJudge
-    with patch("clinical.evaluation.base_judge.BaseJudge._init_adapters"):
+    from praktor.clinical.evaluation.hedis_judge import HEDISJudge
+    with patch("praktor.clinical.evaluation.base_judge.BaseJudge._init_adapters"):
         j = HEDISJudge()
     return j
 
@@ -36,7 +35,7 @@ class TestHEDISJudgeParseScore:
             '"evidence_citation_quality": 6.5, "safety_flag_coverage": 9.0, '
             '"reasoning": "solid recommendation"}'
         )
-        from clinical.schemas import ClinicalJudgeScore
+        from praktor.clinical.schemas import ClinicalJudgeScore
         score = self.judge._parse_score(raw, "rec")
         assert isinstance(score, ClinicalJudgeScore)
         assert score.accuracy == pytest.approx(8.0)

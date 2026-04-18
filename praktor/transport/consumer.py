@@ -16,8 +16,8 @@ from typing import AsyncGenerator
 import aio_pika
 from aio_pika import IncomingMessage
 
-from core.router import Router
-from settings import RABBITMQ_URL, CONCURRENCY, create_log
+from praktor.core.router import Router
+from praktor.settings import RABBITMQ_URL, CONCURRENCY, create_log
 
 log = create_log()
 

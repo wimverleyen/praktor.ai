@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 import math
 
-from settings import create_log
+from praktor.settings import create_log
 
 log = create_log()
 
@@ -48,7 +48,7 @@ class EmbeddingRelevanceEvaluator:
                 self._embeddings = OllamaEmbeddings(model="qwen2.5")
                 log.info("EmbeddingRelevanceEvaluator: embeddings model loaded")
             except Exception as e:
-                from governance.evaluators import EvaluatorUnavailableError
+                from praktor.governance.evaluators import EvaluatorUnavailableError
                 raise EvaluatorUnavailableError(
                     f"Ollama embeddings unavailable: {e}. "
                     "Ensure Ollama is running with an embedding-capable model."
@@ -63,7 +63,7 @@ class EmbeddingRelevanceEvaluator:
                 asyncio.to_thread(embeddings.embed_query, response),
             )
         except Exception as e:
-            from governance.evaluators import EvaluatorUnavailableError
+            from praktor.governance.evaluators import EvaluatorUnavailableError
             raise EvaluatorUnavailableError(
                 f"Embedding call failed: {e}. Is Ollama running?"
             ) from e

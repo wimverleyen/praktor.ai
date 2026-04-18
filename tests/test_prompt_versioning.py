@@ -10,11 +10,10 @@ import tempfile
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "praktor"))
 
 import pytest
 
-from core.prompt_registry import PromptRegistry, PromptVersion
+from praktor.core.prompt_registry import PromptRegistry, PromptVersion
 
 
 # ===========================================================================
@@ -154,8 +153,8 @@ class TestJudgeEvaluator:
 
     def _make_judge(self, response_json: str):
         """Create a JudgeEvaluator with a mocked LLM response."""
-        from core.judge import JudgeEvaluator
-        with patch("LLM.llm_factory.LLMFactory") as mock_factory:
+        from praktor.core.judge import JudgeEvaluator
+        with patch("praktor.LLM.llm_factory.LLMFactory") as mock_factory:
             mock_factory.return_value.create_llm.return_value = MagicMock()
             judge = JudgeEvaluator(model="test-model")
         judge._adapter.ainvoke = AsyncMock(return_value=response_json)
@@ -206,7 +205,7 @@ class TestJudgeEvaluator:
         assert result["score_a"] == pytest.approx(8.5)
 
     def test_summary_format(self):
-        from core.judge import JudgeScore
+        from praktor.core.judge import JudgeScore
         score = JudgeScore(
             score=7.5,
             reasoning="Good.",
@@ -233,8 +232,8 @@ class TestPromptOptimizer:
         self._tmp.cleanup()
 
     def _make_optimizer(self, new_prompt: str = "Improved: {question}\n\nHistory: {history}"):
-        from core.prompt_optimizer import PromptOptimizer
-        with patch("LLM.llm_factory.LLMFactory") as mock_factory:
+        from praktor.core.prompt_optimizer import PromptOptimizer
+        with patch("praktor.LLM.llm_factory.LLMFactory") as mock_factory:
             mock_factory.return_value.create_llm.return_value = MagicMock()
             opt = PromptOptimizer(
                 agent_name="test_agent",
@@ -272,8 +271,8 @@ class TestPromptOptimizer:
     @pytest.mark.asyncio
     async def test_optimize_raises_without_active_version(self):
         empty_registry = PromptRegistry(store_dir=self._tmp.name + "/empty")
-        from core.prompt_optimizer import PromptOptimizer
-        with patch("LLM.llm_factory.LLMFactory") as mock_factory:
+        from praktor.core.prompt_optimizer import PromptOptimizer
+        with patch("praktor.LLM.llm_factory.LLMFactory") as mock_factory:
             mock_factory.return_value.create_llm.return_value = MagicMock()
             opt = PromptOptimizer(
                 agent_name="no_agent",

@@ -28,7 +28,7 @@ from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Any
 
-from settings import create_log
+from praktor.settings import create_log
 
 log = create_log()
 

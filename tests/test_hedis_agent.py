@@ -19,7 +19,6 @@ from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "praktor"))
 
 
 # ---------------------------------------------------------------------------
@@ -29,7 +28,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "praktor"))
 class TestParseNextBestAction:
 
     def _parse(self, text: str, member: str = "abc123def456abc1") -> dict:
-        from clinical.agents.hedis_gap_agent import parse_next_best_action
+        from praktor.clinical.agents.hedis_gap_agent import parse_next_best_action
         return parse_next_best_action(text, member)
 
     def test_parses_all_fields(self):
@@ -146,14 +145,14 @@ LANGUAGE: en
 class TestHEDISGapDefinition:
 
     def test_definition_has_required_fields(self):
-        from clinical.agents.hedis_gap_agent import HEDISGapDefinition
+        from praktor.clinical.agents.hedis_gap_agent import HEDISGapDefinition
         defn = HEDISGapDefinition
         assert defn.name == "hedis_gap"
         assert defn.max_steps == 7
         assert defn.temperature == 0.0
 
     def test_definition_has_all_tools(self):
-        from clinical.agents.hedis_gap_agent import HEDISGapDefinition
+        from praktor.clinical.agents.hedis_gap_agent import HEDISGapDefinition
         tools = HEDISGapDefinition.tools
         expected = {
             "gap_registry", "drug_adherence", "claims_lookup",
@@ -162,18 +161,18 @@ class TestHEDISGapDefinition:
         assert expected.issubset(set(tools)), f"Missing tools: {expected - set(tools)}"
 
     def test_prompt_template_has_required_variables(self):
-        from clinical.agents.hedis_gap_agent import HEDISGapDefinition
+        from praktor.clinical.agents.hedis_gap_agent import HEDISGapDefinition
         prompt = HEDISGapDefinition.prompt_template
         for var in ("{member_id_hash_short}", "{measurement_year}"):
             assert var in prompt, f"Prompt missing variable: {var}"
 
     def test_prompt_references_stars_weights(self):
-        from clinical.agents.hedis_gap_agent import HEDISGapDefinition
+        from praktor.clinical.agents.hedis_gap_agent import HEDISGapDefinition
         prompt = HEDISGapDefinition.prompt_template
         assert "STARS" in prompt or "stars_weight" in prompt.lower()
 
     def test_prompt_references_escalation(self):
-        from clinical.agents.hedis_gap_agent import HEDISGapDefinition
+        from praktor.clinical.agents.hedis_gap_agent import HEDISGapDefinition
         prompt = HEDISGapDefinition.prompt_template
         assert "escalate" in prompt.lower() or "ESCALATE" in prompt
 
@@ -190,7 +189,7 @@ class TestDegradedToolPaths:
     """
 
     def _parse(self, text: str) -> dict:
-        from clinical.agents.hedis_gap_agent import parse_next_best_action
+        from praktor.clinical.agents.hedis_gap_agent import parse_next_best_action
         return parse_next_best_action(text, "testmember0000001234")
 
     def test_critical_data_unavailable_escalates(self):
@@ -236,9 +235,9 @@ class TestDryRunExecution:
         import dataclasses
         from unittest.mock import AsyncMock, MagicMock, patch
 
-        from clinical.agents.hedis_gap_agent import HEDISGapDefinition, parse_next_best_action
-        from clinical.schemas import hash_member_id
-        from core.agent import Agent
+        from praktor.clinical.agents.hedis_gap_agent import HEDISGapDefinition, parse_next_best_action
+        from praktor.clinical.schemas import hash_member_id
+        from praktor.core.agent import Agent
 
         dry_response = """Thought: I have all the information I need.
 Final Answer:
@@ -260,7 +259,7 @@ LANGUAGE: en"""
         defn = dataclasses.replace(HEDISGapDefinition, llm_model="dry-run-mock")
         # Patch AsyncLLMAdapter at the module level so the lazily-created
         # _react_adapter picks up the mock (it's built inside _react_loop).
-        with patch("core.agent.AsyncLLMAdapter") as MockAdapter:
+        with patch("praktor.core.agent.AsyncLLMAdapter") as MockAdapter:
             instance = MagicMock()
             instance.ainvoke = mock_ainvoke
             instance.astream = mock_astream
@@ -293,9 +292,9 @@ LANGUAGE: en"""
         """Agent dry-run with low confidence output escalates correctly."""
         import dataclasses
 
-        from clinical.agents.hedis_gap_agent import HEDISGapDefinition, parse_next_best_action
-        from clinical.schemas import hash_member_id
-        from core.agent import Agent
+        from praktor.clinical.agents.hedis_gap_agent import HEDISGapDefinition, parse_next_best_action
+        from praktor.clinical.schemas import hash_member_id
+        from praktor.core.agent import Agent
 
         low_confidence_response = """Final Answer:
 ACTION_TYPE: pharmacy_refill_reminder
@@ -315,7 +314,7 @@ LANGUAGE: en"""
 
         defn = dataclasses.replace(HEDISGapDefinition, llm_model="dry-run-mock")
         from unittest.mock import MagicMock, patch
-        with patch("core.agent.AsyncLLMAdapter") as MockAdapter:
+        with patch("praktor.core.agent.AsyncLLMAdapter") as MockAdapter:
             instance = MagicMock()
             instance.ainvoke = mock_ainvoke_low
             instance.astream = mock_astream_low

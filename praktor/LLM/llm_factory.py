@@ -1,6 +1,6 @@
 from abc import ABC
 
-from settings import MODEL
+from praktor.settings import MODEL
 
 
 class LLMFactory(ABC):

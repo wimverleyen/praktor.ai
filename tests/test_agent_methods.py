@@ -11,18 +11,16 @@ import sys
 from pathlib import Path
 from unittest.mock import patch, MagicMock, call
 
-sys.path.insert(0, str(Path(__file__).parent.parent / 'praktor'))
-
 import pytest
 
 
 class TestMessage:
 
-    @patch('agent_method.MD', '/tmp/')
-    @patch('agent_method.save_markdown')
-    @patch('agent_method.LLMAdapter')
+    @patch('praktor.agent_method.MD', '/tmp/')
+    @patch('praktor.agent_method.save_markdown')
+    @patch('praktor.agent_method.LLMAdapter')
     def test_message_calls_llm_and_saves(self, mock_adapter_cls, mock_save):
-        from agent_method import Message
+        from praktor.agent_method import Message
 
         mock_adapter = MagicMock()
         mock_adapter.generate.return_value = 'Generated message text'
@@ -39,11 +37,11 @@ class TestMessage:
 
 class TestThankYouEmail:
 
-    @patch('agent_method.MD', '/tmp/')
-    @patch('agent_method.save_markdown')
-    @patch('agent_method.LLMAdapter')
+    @patch('praktor.agent_method.MD', '/tmp/')
+    @patch('praktor.agent_method.save_markdown')
+    @patch('praktor.agent_method.LLMAdapter')
     def test_thank_you_calls_llm_and_saves(self, mock_adapter_cls, mock_save):
-        from agent_method import ThankYouEmail
+        from praktor.agent_method import ThankYouEmail
 
         mock_adapter = MagicMock()
         mock_adapter.generate.return_value = 'Thank you email text'
@@ -63,11 +61,11 @@ class TestThankYouEmail:
 
 class TestSearch:
 
-    @patch('agent_method.MD', '/tmp/')
-    @patch('agent_method.save_markdown')
-    @patch('agent_method.LLMAdapter')
+    @patch('praktor.agent_method.MD', '/tmp/')
+    @patch('praktor.agent_method.save_markdown')
+    @patch('praktor.agent_method.LLMAdapter')
     def test_search_calls_llm_and_saves(self, mock_adapter_cls, mock_save):
-        from agent_method import Search
+        from praktor.agent_method import Search
 
         mock_adapter = MagicMock()
         mock_adapter.generate.return_value = 'Search result'
@@ -82,11 +80,11 @@ class TestSearch:
 
 class TestWriteCoverLetter:
 
-    @patch('agent_method.MD', '/tmp/')
-    @patch('agent_method.save_markdown')
-    @patch('agent_method.LLMAdapter')
+    @patch('praktor.agent_method.MD', '/tmp/')
+    @patch('praktor.agent_method.save_markdown')
+    @patch('praktor.agent_method.LLMAdapter')
     def test_cover_letter_multi_pass(self, mock_adapter_cls, mock_save):
-        from agent_method import WriteCoverLetter
+        from praktor.agent_method import WriteCoverLetter
 
         mock_adapter = MagicMock()
         mock_adapter.generate.side_effect = ['Draft 1', 'Improved draft', 'Final draft']
@@ -108,11 +106,11 @@ class TestWriteCoverLetter:
 
 class TestJobApplication:
 
-    @patch('agent_method.MD', '/tmp/')
-    @patch('agent_method.save_markdown')
-    @patch('agent_method.LLMAdapter')
+    @patch('praktor.agent_method.MD', '/tmp/')
+    @patch('praktor.agent_method.save_markdown')
+    @patch('praktor.agent_method.LLMAdapter')
     def test_job_application_saves_resume(self, mock_adapter_cls, mock_save):
-        from agent_method import JobApplication
+        from praktor.agent_method import JobApplication
 
         mock_adapter = MagicMock()
         mock_adapter.generate.return_value = 'Tailored resume content'

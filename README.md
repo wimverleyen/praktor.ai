@@ -43,6 +43,78 @@ That's it. One file, one agent, local inference.
 
 ---
 
+## Governance quickstart
+
+One-liner with `block_pii()`:
+
+```python
+from praktor.core.agent_definition import AgentDefinition
+from praktor.governance import block_pii, RegexEntities
+
+defn = AgentDefinition(
+    name="my_agent",
+    prompt_template="Answer: {text}",
+    input_schema=MyInput,
+    llm_model="qwen2.5",
+)
+defn = block_pii(defn, [RegexEntities.US_SSN, RegexEntities.EMAIL_ADDRESS])
+```
+
+Full control with `GovernancePolicy`:
+
+```python
+from praktor.core.agent_definition import AgentDefinition
+from praktor.governance.policy import GovernancePolicy, DetectorConfig, PolicyAction, AuditSinkType
+from praktor.governance.detectors import RegexDetector, RegexEntities
+
+policy = GovernancePolicy(
+    pre_execution=[
+        DetectorConfig(
+            detector_class=RegexDetector,          # class or "praktor.governance.detectors.RegexDetector"
+            entities=[RegexEntities.US_SSN, RegexEntities.EMAIL_ADDRESS],
+            action=PolicyAction.REDACT,
+        )
+    ],
+    audit_sinks=[AuditSinkType.STDOUT],
+)
+
+defn = AgentDefinition(
+    name="my_agent",
+    prompt_template="Answer: {text}",
+    governance_policy=policy,
+)
+```
+
+Expected output for a BLOCK action:
+
+```
+# GovernancePolicyViolation raised — execution halted
+praktor.governance.policy.GovernancePolicyViolation: pre_execution: field='text',
+  entity=US_SSN, detector=RegexDetector, action=block.
+  To allow this content, use action=PolicyAction.FLAG
+  or set action=PolicyAction.REDACT.
+  See: https://github.com/wimverleyen/praktor.ai#governance-quickstart
+```
+
+Set `dry_run=True` to log findings to stderr without raising or writing to sinks:
+
+```python
+policy = GovernancePolicy(
+    pre_execution=[DetectorConfig(
+        detector_class=RegexDetector,
+        entities=[RegexEntities.US_SSN],
+        action=PolicyAction.BLOCK,
+    )],
+    dry_run=True,
+)
+# stderr: [governance dry_run] pre_execution: field='text', entity=US_SSN, detector=RegexDetector, action=block
+```
+
+PII/PHI in any payload field is detected before the LLM sees it. Every run produces
+an audit entry. Run the demo: `python -m praktor demo-governance`
+
+---
+
 ## How it works
 
 ```
@@ -789,33 +861,3 @@ python -m praktor prompt activate <agent> <version_id>
 python -m praktor prompt eval <agent> <version_id> -q "..." -r "..."
 python -m praktor prompt optimize <agent> -x examples.json --goal "..."
 ```
-
----
-
-## Governance quickstart
-
-```python
-from core.agent_definition import AgentDefinition
-from governance.policy import GovernancePolicy, DetectorConfig, PolicyAction, AuditSinkType
-
-policy = GovernancePolicy(
-    pre_execution=[
-        DetectorConfig(
-            detector_class="governance.detectors.RegexDetector",
-            entities=["US_SSN", "EMAIL_ADDRESS"],
-            action=PolicyAction.REDACT,
-        )
-    ],
-    audit_sinks=[AuditSinkType.STDOUT],
-)
-
-defn = AgentDefinition(
-    name="my_agent",
-    prompt_template="Answer: {text}",
-    governance_policy=policy,
-)
-```
-
-PII/PHI in any payload field is redacted before the LLM sees it. Every run produces
-an audit entry. Set `action=PolicyAction.BLOCK` to halt execution instead of redacting.
-Set `dry_run=True` to log findings without raising or writing to sinks.

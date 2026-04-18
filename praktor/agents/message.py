@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from core.agent_definition import AgentDefinition, MemoryPolicy, OutputSink
+from praktor.core.agent_definition import AgentDefinition, MemoryPolicy, OutputSink
 
 _PROMPT = """You are a top business executive specialized in artificial intelligence and data science.
 

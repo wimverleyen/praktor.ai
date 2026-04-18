@@ -3,13 +3,13 @@ import re
 import sys
 from typing import AsyncGenerator
 
-from core.agent_definition import AgentDefinition, MemoryPolicy, OutputSink
-from core.memory import NullMemory
-from core.observability import Span
-from core.tool import get_tool
-from LLM.llm_interface import AsyncLLMAdapter
+from praktor.core.agent_definition import AgentDefinition, MemoryPolicy, OutputSink
+from praktor.core.memory import NullMemory
+from praktor.core.observability import Span
+from praktor.core.tool import get_tool
+from praktor.LLM.llm_interface import AsyncLLMAdapter
 
-from settings import MD, create_log
+from praktor.settings import MD, create_log
 
 log = create_log()
 
@@ -90,7 +90,7 @@ class Agent:
         # Governance — cache evaluator instances so import_module is not called per run
         self._evaluators: list[tuple] = []  # list of (EvaluationPass, Evaluator)
         if definition.governance_policy:
-            from governance.evaluators import load_evaluator, EvaluatorUnavailableError
+            from praktor.governance.evaluators import load_evaluator, EvaluatorUnavailableError
             for eval_pass in definition.governance_policy.evaluation_passes:
                 try:
                     evaluator = load_evaluator(eval_pass.evaluator_class)
@@ -102,10 +102,10 @@ class Agent:
         if definition.memory_policy == MemoryPolicy.NONE:
             self._memory = NullMemory()
         elif definition.memory_policy == MemoryPolicy.SHORT_TERM:
-            from memory.buffer import InMemoryBuffer
+            from praktor.memory.buffer import InMemoryBuffer
             self._memory = InMemoryBuffer()
         elif definition.memory_policy == MemoryPolicy.LONG_TERM:
-            from memory.vector import FAISSMemory
+            from praktor.memory.vector import FAISSMemory
             self._memory = FAISSMemory()
 
     @property
@@ -145,8 +145,8 @@ class Agent:
         audit_sinks = []
 
         if policy:
-            from governance.audit import AuditEntry, LocalFileAuditSink, StdoutAuditSink
-            from governance.policy import AuditSinkType, GovernancePolicyViolation
+            from praktor.governance.audit import AuditEntry, LocalFileAuditSink, StdoutAuditSink
+            from praktor.governance.policy import AuditSinkType, GovernancePolicyViolation
             import hashlib, time
 
             prompt_text = str(payload)
@@ -166,7 +166,7 @@ class Agent:
                         audit_sinks.append(StdoutAuditSink())
                     elif sink_type == AuditSinkType.KAFKA:
                         try:
-                            from governance.audit_kafka import KafkaAuditSink
+                            from praktor.governance.audit_kafka import KafkaAuditSink
                             audit_sinks.append(KafkaAuditSink())
                         except Exception as exc:
                             log.warning(f"KafkaAuditSink init failed: {exc}")
@@ -176,8 +176,8 @@ class Agent:
         try:
             # --- Pre-execution governance ---
             if policy and policy.pre_execution:
-                from governance.detectors import load_detector
-                from governance.policy import PolicyAction, GovernancePolicyViolation
+                from praktor.governance.detectors import load_detector
+                from praktor.governance.policy import PolicyAction, GovernancePolicyViolation
 
                 for det_cfg in policy.pre_execution:
                     detector = load_detector(det_cfg.detector_class)
@@ -198,13 +198,18 @@ class Agent:
                             if audit_entry is not None:
                                 audit_entry.governance_actions.append(action_record)
 
+                            from praktor.monitoring.governance import record_governance_detection, record_governance_violation, record_governance_dry_run
+                            record_governance_detection(r.entity_type)
+
                             if det_cfg.action == PolicyAction.BLOCK:
                                 msg = f"BLOCK: {r.entity_type} detected in field '{field_name}'"
                                 if audit_entry is not None:
                                     audit_entry.flagged = True
                                 if policy.dry_run:
                                     sys.stderr.write(f"[governance dry_run] {msg}\n")
+                                    record_governance_dry_run()
                                 else:
+                                    record_governance_violation("block", r.entity_type)
                                     raise GovernancePolicyViolation(
                                         msg,
                                         field_name=field_name,
@@ -212,10 +217,12 @@ class Agent:
                                         detector_class=det_cfg.detector_class,
                                     )
                             elif det_cfg.action == PolicyAction.REDACT:
+                                record_governance_violation("redact", r.entity_type)
                                 payload[field_name] = payload[field_name].replace(
                                     r.text, f"[REDACTED:{r.entity_type}]"
                                 )
                             elif det_cfg.action == PolicyAction.FLAG:
+                                record_governance_violation("flag", r.entity_type)
                                 if audit_entry is not None:
                                     audit_entry.flagged = True
 
@@ -248,8 +255,8 @@ class Agent:
 
             # --- Post-execution governance ---
             if policy and policy.post_execution:
-                from governance.detectors import load_detector
-                from governance.policy import PolicyAction, GovernancePolicyViolation
+                from praktor.governance.detectors import load_detector
+                from praktor.governance.policy import PolicyAction, GovernancePolicyViolation
 
                 for det_cfg in policy.post_execution:
                     detector = load_detector(det_cfg.detector_class)
@@ -267,13 +274,18 @@ class Agent:
                         if audit_entry is not None:
                             audit_entry.governance_actions.append(action_record)
 
+                        from praktor.monitoring.governance import record_governance_detection, record_governance_violation, record_governance_dry_run
+                        record_governance_detection(r.entity_type)
+
                         if det_cfg.action == PolicyAction.BLOCK:
                             msg = f"BLOCK: {r.entity_type} detected in response"
                             if audit_entry is not None:
                                 audit_entry.flagged = True
                             if policy.dry_run:
                                 sys.stderr.write(f"[governance dry_run] {msg}\n")
+                                record_governance_dry_run()
                             else:
+                                record_governance_violation("block", r.entity_type)
                                 raise GovernancePolicyViolation(
                                     msg,
                                     field_name="response",
@@ -281,16 +293,18 @@ class Agent:
                                     detector_class=det_cfg.detector_class,
                                 )
                         elif det_cfg.action == PolicyAction.REDACT:
+                            record_governance_violation("redact", r.entity_type)
                             final_response = final_response.replace(
                                 r.text, f"[REDACTED:{r.entity_type}]"
                             )
                         elif det_cfg.action == PolicyAction.FLAG:
+                            record_governance_violation("flag", r.entity_type)
                             if audit_entry is not None:
                                 audit_entry.flagged = True
 
             # --- Evaluation passes ---
             if policy and self._evaluators:
-                from governance.policy import PolicyAction, EvaluationFailedError
+                from praktor.governance.policy import PolicyAction, EvaluationFailedError
 
                 for eval_pass, evaluator in self._evaluators:
                     try:
@@ -491,8 +505,8 @@ class Agent:
         ensuring the monitoring path is safe to call from any context.
         """
         try:
-            from monitoring.collector import _span_to_run_record
-            from monitoring.registry import get_registry
+            from praktor.monitoring.collector import _span_to_run_record
+            from praktor.monitoring.registry import get_registry
             record = _span_to_run_record(span, self._definition, token_count, passes, error)
             registry = get_registry()
             registry.record_run(record)
@@ -503,7 +517,7 @@ class Agent:
 
     def _write_file(self, stem: str, content: str) -> None:
         try:
-            from utils import save_markdown
+            from praktor.utils import save_markdown
             path = f"{MD}{stem}.md" if MD else f"{stem}.md"
             save_markdown(path, content)
             log.debug(f"Wrote output to {path}")

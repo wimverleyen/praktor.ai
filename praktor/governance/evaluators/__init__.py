@@ -13,7 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
-from governance.policy import PolicyAction
+from praktor.governance.policy import PolicyAction
 
 
 @runtime_checkable
@@ -78,7 +78,7 @@ def load_evaluator(import_path: str) -> Evaluator:
 
 
 # LLM-as-judge evaluators (domain-specific, PHI-aware)
-from governance.evaluators.llm_judge import (  # noqa: E402
+from praktor.governance.evaluators.llm_judge import (  # noqa: E402
     JudgeResult,
     LLMJudgeEvaluator,
     FaithfulnessJudge,

@@ -26,10 +26,10 @@ from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 
-from settings import MODEL, VECTOR_DB, create_log
-from clinical.privacy.deidentifier import validate_phi_scrubbed
-from clinical.privacy.audit import audit
-from clinical.schemas import ClinicalBrainChunk
+from praktor.settings import MODEL, VECTOR_DB, create_log
+from praktor.clinical.privacy.deidentifier import validate_phi_scrubbed
+from praktor.clinical.privacy.audit import audit
+from praktor.clinical.schemas import ClinicalBrainChunk
 
 log = create_log()
 

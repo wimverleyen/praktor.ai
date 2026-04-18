@@ -23,7 +23,7 @@ from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Protocol
 
-from settings import CONCURRENCY, create_log
+from praktor.settings import CONCURRENCY, create_log
 
 log = create_log()
 

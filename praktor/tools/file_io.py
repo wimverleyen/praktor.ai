@@ -2,8 +2,8 @@ import asyncio
 import json
 from pathlib import Path
 
-from core.tool import ToolResult, register_tool
-from settings import MD, create_log
+from praktor.core.tool import ToolResult, register_tool
+from praktor.settings import MD, create_log
 
 log = create_log()
 

@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 import os
 
-from settings import create_log
+from praktor.settings import create_log
 
 log = create_log()
 

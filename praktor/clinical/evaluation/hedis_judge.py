@@ -25,9 +25,9 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from settings import create_log
-from clinical.schemas import ClinicalJudgeScore
-from clinical.evaluation.base_judge import BaseJudge
+from praktor.settings import create_log
+from praktor.clinical.schemas import ClinicalJudgeScore
+from praktor.clinical.evaluation.base_judge import BaseJudge
 
 log = create_log()
 

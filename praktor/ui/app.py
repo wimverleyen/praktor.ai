@@ -52,7 +52,7 @@ def _db_path() -> str:
 @st.cache_resource
 def _get_store():
     """Return a MonitoringStore; cached across reruns."""
-    from monitoring.store import MonitoringStore
+    from praktor.monitoring.store import MonitoringStore
     return MonitoringStore(db_path=_db_path())
 
 
@@ -266,8 +266,8 @@ def _render_run_detail(run: dict):
 @st.cache_resource
 def _get_all_definitions():
     """Load all registered AgentDefinitions from the global router."""
-    import agents  # triggers registration
-    from core.router import get_global_router
+    import praktor.agents  # triggers registration
+    from praktor.core.router import get_global_router
     router = get_global_router()
     # _agents maps name → Agent; expose the definition from each
     return {name: agent.definition for name, agent in router._agents.items()}
@@ -362,7 +362,7 @@ def tab_skills():
 
 
 def _run_agent(defn, payload: dict):
-    from core.agent import Agent
+    from praktor.core.agent import Agent
 
     st.divider()
     st.markdown(f"**Running `{defn.name}`…**")

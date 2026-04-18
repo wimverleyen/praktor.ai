@@ -18,10 +18,10 @@ import json
 def cmd_receive(args):
     """Start the async RabbitMQ consumer."""
     import asyncio
-    import agents  # noqa: F401 — triggers auto-registration of all agents
-    from core.observability import init_tracer_provider
-    from core.router import get_global_router
-    from transport.consumer import run_consumer
+    import praktor.agents  # noqa: F401 — triggers auto-registration of all agents
+    from praktor.core.observability import init_tracer_provider
+    from praktor.core.router import get_global_router
+    from praktor.transport.consumer import run_consumer
 
     init_tracer_provider()
     router = get_global_router()
@@ -37,8 +37,8 @@ def cmd_publish(args):
         python -m praktor publish --agent thank_you --data '{"adjective": "professional", ...}'
     """
     import asyncio
-    import agents  # noqa: F401
-    from transport.producer import publish
+    import praktor.agents  # noqa: F401
+    from praktor.transport.producer import publish
 
     if args.data:
         raw = args.data
@@ -64,8 +64,8 @@ def cmd_publish(args):
 
 def cmd_list(args):
     """List all registered agents and their required input fields."""
-    import agents  # noqa: F401
-    from transport.schemas import list_schemas
+    import praktor.agents  # noqa: F401
+    from praktor.transport.schemas import list_schemas
 
     schemas = list_schemas()
     if not schemas:
@@ -111,8 +111,8 @@ def cmd_monitor(args):
     subcmd = args.monitor_cmd
 
     if subcmd == "summary":
-        from monitoring.store import MonitoringStore
-        from monitoring.cost import format_cost
+        from praktor.monitoring.store import MonitoringStore
+        from praktor.monitoring.cost import format_cost
         store = MonitoringStore()
 
         async def _run():
@@ -155,7 +155,7 @@ def cmd_monitor(args):
 
     elif subcmd == "serve":
         port = getattr(args, "port", 8080)
-        from monitoring import configure
+        from praktor.monitoring import configure
         configure(prometheus_port=port)
         print(f"Prometheus metrics scrape endpoint: http://localhost:{port}/metrics")
         print("Press Ctrl+C to stop.")
@@ -170,14 +170,14 @@ def cmd_monitor(args):
         fmt = getattr(args, "format", "grafana")
         if fmt == "grafana":
             datasource = getattr(args, "datasource", "${datasource}")
-            from monitoring.exporters.grafana import print_dashboard
+            from praktor.monitoring.exporters.grafana import print_dashboard
             print_dashboard(datasource=datasource)
         else:
             print(f"Unknown export format '{fmt}'. Available: grafana", file=sys.stderr)
             sys.exit(1)
 
     elif subcmd == "kpi":
-        from monitoring.store import MonitoringStore
+        from praktor.monitoring.store import MonitoringStore
         store = MonitoringStore()
 
         async def _run():
@@ -200,6 +200,21 @@ def cmd_monitor(args):
         asyncio.run(_run())
 
 
+def cmd_demo_governance(args):
+    """Run the governance demo (no Ollama required by default)."""
+    import sys as _sys
+    import os
+    _root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if _root not in _sys.path:
+        _sys.path.insert(0, _root)
+    from scripts.demo_governance import main as _demo_main
+    import sys as _sys2
+    _sys2.argv = ["demo-governance"]
+    if getattr(args, "model", ""):
+        _sys2.argv += ["--model", args.model]
+    _demo_main()
+
+
 def cmd_prompt(args):
     """
     Manage prompt versions.
@@ -212,7 +227,7 @@ def cmd_prompt(args):
         python -m praktor prompt optimize <agent> --examples examples.json [--goal "..."] [--model llama3:8b]
     """
     import asyncio
-    from core.prompt_registry import PromptRegistry
+    from praktor.core.prompt_registry import PromptRegistry
 
     registry = PromptRegistry()
 
@@ -236,7 +251,7 @@ def cmd_prompt(args):
         print(f"Activated {args.version_id} for agent '{args.agent}'.")
 
     elif subcmd == "eval":
-        from core.judge import JudgeEvaluator
+        from praktor.core.judge import JudgeEvaluator
         model = getattr(args, "model", None) or "qwen2.5"
         judge = JudgeEvaluator(model=model)
 
@@ -252,7 +267,7 @@ def cmd_prompt(args):
         asyncio.run(_run())
 
     elif subcmd == "optimize":
-        from core.prompt_optimizer import PromptOptimizer
+        from praktor.core.prompt_optimizer import PromptOptimizer
 
         if args.examples:
             try:
@@ -328,6 +343,10 @@ def main():
     mkpi.add_argument("--name", "-n", help="Filter by KPI name")
     mkpi.add_argument("--hours", type=float, default=24, help="Time window in hours (default: 24)")
 
+    # --- demo-governance ---
+    dg = sub.add_parser("demo-governance", help="Run governance demo (detector + optional agent)")
+    dg.add_argument("--model", default="", help="LLM model (e.g. llama3:8b). Omit for detector-only mode.")
+
     # --- prompt ---
     pr = sub.add_parser("prompt", help="Manage prompt versions")
     pr_sub = pr.add_subparsers(dest="prompt_cmd", required=True)
@@ -370,8 +389,9 @@ def main():
         "publish":  cmd_publish,
         "list":     cmd_list,
         "agent":    cmd_agent,
-        "monitor":  cmd_monitor,
-        "prompt":   cmd_prompt,
+        "monitor":          cmd_monitor,
+        "demo-governance":  cmd_demo_governance,
+        "prompt":           cmd_prompt,
     }
     dispatch[args.command](args)
 

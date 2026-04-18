@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from core.agent_definition import AgentDefinition, MemoryPolicy, OutputSink
+from praktor.core.agent_definition import AgentDefinition, MemoryPolicy, OutputSink
 
 _PROMPT = """You are an expert resume analyst and career coach.
 

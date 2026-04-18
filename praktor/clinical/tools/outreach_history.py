@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import json
 
-from core.tool import ToolResult, register_tool
-from settings import create_log
+from praktor.core.tool import ToolResult, register_tool
+from praktor.settings import create_log
 
 log = create_log()
 
@@ -32,7 +32,7 @@ class OutreachHistoryTool:
 
             measure_id = params.get("measure_id")
 
-            from clinical.data.clinical_store import get_clinical_store
+            from praktor.clinical.data.clinical_store import get_clinical_store
             store = get_clinical_store()
             history = store.get_outreach(member_id_hash, measure_id=measure_id, limit=10)
 

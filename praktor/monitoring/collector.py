@@ -2,7 +2,7 @@
 Bridge between core.observability.Span and the MetricsRegistry.
 
 Called from Agent.run() after span.finish():
-    from monitoring.collector import record_run
+    from praktor.monitoring.collector import record_run
     await record_run(span, definition, token_count, passes)
 
 This module handles:
@@ -18,13 +18,13 @@ import asyncio
 import time
 from typing import TYPE_CHECKING, Any
 
-from monitoring.cost import compute_cost
-from monitoring.store import RunRecord, JudgeEvalRecord
-from settings import create_log
+from praktor.monitoring.cost import compute_cost
+from praktor.monitoring.store import RunRecord, JudgeEvalRecord
+from praktor.settings import create_log
 
 if TYPE_CHECKING:
-    from core.observability import Span
-    from core.agent_definition import AgentDefinition
+    from praktor.core.observability import Span
+    from praktor.core.agent_definition import AgentDefinition
 
 log = create_log()
 
@@ -120,7 +120,7 @@ async def record_run(
         prompt_version: Active prompt version_id at run time (optional).
     """
     try:
-        from monitoring.registry import get_registry
+        from praktor.monitoring.registry import get_registry
         registry = get_registry()
 
         record = _span_to_run_record(
@@ -180,8 +180,8 @@ async def record_judge(
     ClinicalJudgeScore / DiabetesJudgeScore dataclasses.
     """
     try:
-        from monitoring.registry import get_registry
-        from monitoring.store import JudgeEvalRecord
+        from praktor.monitoring.registry import get_registry
+        from praktor.monitoring.store import JudgeEvalRecord
         registry = get_registry()
 
         overall = _overall_score(score_obj)

@@ -14,8 +14,8 @@ import json
 import uuid
 from typing import AsyncGenerator
 
-from settings import create_log
-from transport.transport import Transport, TransportMessage, TransportError
+from praktor.settings import create_log
+from praktor.transport.transport import Transport, TransportMessage, TransportError
 
 log = create_log()
 

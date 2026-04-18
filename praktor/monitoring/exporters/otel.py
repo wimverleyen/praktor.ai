@@ -27,9 +27,9 @@ import time
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from monitoring.registry import MetricsRegistry
+    from praktor.monitoring.registry import MetricsRegistry
 
-from settings import create_log
+from praktor.settings import create_log
 
 log = create_log()
 

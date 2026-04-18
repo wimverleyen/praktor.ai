@@ -7,18 +7,16 @@ import json
 from pathlib import Path
 from unittest.mock import AsyncMock, patch, MagicMock
 
-sys.path.insert(0, str(Path(__file__).parent.parent / 'praktor'))
-
 import pytest
 from pydantic import BaseModel
 
-from governance.evaluators import EvaluationPass, load_evaluator, EvaluatorUnavailableError
-from governance.evaluators.toxicity import RegexToxicityEvaluator
-from governance.policy import (
+from praktor.governance.evaluators import EvaluationPass, load_evaluator, EvaluatorUnavailableError
+from praktor.governance.evaluators.toxicity import RegexToxicityEvaluator
+from praktor.governance.policy import (
     GovernancePolicy, PolicyAction, AuditSinkType,
     EvaluationFailedError,
 )
-from governance.audit import AuditEntry
+from praktor.governance.audit import AuditEntry
 
 
 class _EvalInput(BaseModel):
@@ -64,7 +62,7 @@ class TestRegexToxicityEvaluator:
 class TestEvaluatorLoading:
 
     def test_load_evaluator_by_path(self):
-        evaluator = load_evaluator("governance.evaluators.toxicity.RegexToxicityEvaluator")
+        evaluator = load_evaluator("praktor.governance.evaluators.toxicity.RegexToxicityEvaluator")
         assert isinstance(evaluator, RegexToxicityEvaluator)
 
     def test_load_evaluator_invalid_path_raises(self):
@@ -81,8 +79,8 @@ class TestAgentEvaluationHooks:
     @pytest.mark.asyncio
     async def test_evaluation_pass_records_score(self):
         """Evaluator passes threshold: score recorded, agent continues."""
-        from core.agent import Agent
-        from core.agent_definition import AgentDefinition
+        from praktor.core.agent import Agent
+        from praktor.core.agent_definition import AgentDefinition
 
         written_entries: list[AuditEntry] = []
 
@@ -93,7 +91,7 @@ class TestAgentEvaluationHooks:
         policy = GovernancePolicy(
             evaluation_passes=[
                 EvaluationPass(
-                    evaluator_class="governance.evaluators.toxicity.RegexToxicityEvaluator",
+                    evaluator_class="praktor.governance.evaluators.toxicity.RegexToxicityEvaluator",
                     metric_name="toxicity",
                     pass_threshold=0.5,
                     on_fail=PolicyAction.FLAG,
@@ -113,7 +111,7 @@ class TestAgentEvaluationHooks:
             yield "clean response"
 
         with patch.object(agent._adapter, "astream", side_effect=_fake_stream):
-            with patch("governance.audit.StdoutAuditSink", return_value=_CaptureSink()):
+            with patch("praktor.governance.audit.StdoutAuditSink", return_value=_CaptureSink()):
                 chunks = []
                 async for chunk in agent.run(
                     {"agent_type": "eval_test", "text": "Hello", "session_id": ""},
@@ -131,8 +129,8 @@ class TestAgentEvaluationHooks:
     @pytest.mark.asyncio
     async def test_evaluation_flag_on_fail(self):
         """Score below threshold with on_fail=FLAG: flagged=True, agent continues."""
-        from core.agent import Agent
-        from core.agent_definition import AgentDefinition
+        from praktor.core.agent import Agent
+        from praktor.core.agent_definition import AgentDefinition
 
         written_entries: list[AuditEntry] = []
 
@@ -143,7 +141,7 @@ class TestAgentEvaluationHooks:
         policy = GovernancePolicy(
             evaluation_passes=[
                 EvaluationPass(
-                    evaluator_class="governance.evaluators.toxicity.RegexToxicityEvaluator",
+                    evaluator_class="praktor.governance.evaluators.toxicity.RegexToxicityEvaluator",
                     metric_name="toxicity",
                     pass_threshold=1.0,  # impossibly high — forces fail
                     on_fail=PolicyAction.FLAG,
@@ -164,7 +162,7 @@ class TestAgentEvaluationHooks:
             yield "this is damn annoying"
 
         with patch.object(agent._adapter, "astream", side_effect=_fake_stream):
-            with patch("governance.audit.StdoutAuditSink", return_value=_CaptureSink()):
+            with patch("praktor.governance.audit.StdoutAuditSink", return_value=_CaptureSink()):
                 chunks = []
                 async for chunk in agent.run(
                     {"agent_type": "eval_test", "text": "test", "session_id": ""},
@@ -180,13 +178,13 @@ class TestAgentEvaluationHooks:
     @pytest.mark.asyncio
     async def test_evaluation_block_on_fail(self):
         """Score below threshold with on_fail=BLOCK: raises EvaluationFailedError."""
-        from core.agent import Agent
-        from core.agent_definition import AgentDefinition
+        from praktor.core.agent import Agent
+        from praktor.core.agent_definition import AgentDefinition
 
         policy = GovernancePolicy(
             evaluation_passes=[
                 EvaluationPass(
-                    evaluator_class="governance.evaluators.toxicity.RegexToxicityEvaluator",
+                    evaluator_class="praktor.governance.evaluators.toxicity.RegexToxicityEvaluator",
                     metric_name="toxicity",
                     pass_threshold=1.0,  # impossibly high
                     on_fail=PolicyAction.BLOCK,
@@ -206,7 +204,7 @@ class TestAgentEvaluationHooks:
             yield "damn this is bad"
 
         with patch.object(agent._adapter, "astream", side_effect=_fake_stream):
-            with patch("governance.audit.StdoutAuditSink", return_value=MagicMock(write=AsyncMock())):
+            with patch("praktor.governance.audit.StdoutAuditSink", return_value=MagicMock(write=AsyncMock())):
                 with pytest.raises(EvaluationFailedError, match="toxicity"):
                     async for _ in agent.run(
                         {"agent_type": "eval_test", "text": "test", "session_id": ""},

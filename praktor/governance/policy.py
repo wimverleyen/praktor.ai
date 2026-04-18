@@ -9,8 +9,10 @@ Attach a GovernancePolicy to any AgentDefinition to enable:
 """
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import Union
 
 
 class PolicyAction(Enum):
@@ -30,8 +32,8 @@ class AuditSinkType(Enum):
 @dataclass
 class DetectorConfig:
     """Configuration for one PII/PHI detector pass."""
-    detector_class: str
-    """Import path, e.g. 'praktor.governance.detectors.RegexDetector'"""
+    detector_class: Union[str, type]
+    """Class or import path, e.g. RegexDetector or 'praktor.governance.detectors.RegexDetector'"""
 
     entities: list[str]
     """Entity types to detect, e.g. ['US_SSN', 'PHONE_NUMBER', 'EMAIL_ADDRESS']"""
@@ -39,6 +41,12 @@ class DetectorConfig:
     action: PolicyAction = PolicyAction.REDACT
     threshold: float = 0.8
     """Confidence threshold 0.0–1.0. RegexDetector always returns 1.0."""
+
+    def __post_init__(self) -> None:
+        if isinstance(self.detector_class, type):
+            self.detector_class = (
+                f"{self.detector_class.__module__}.{self.detector_class.__qualname__}"
+            )
 
 
 @dataclass
@@ -121,7 +129,8 @@ class GovernancePolicyViolation(Exception):
             return (
                 f"{base} — field='{self.field_name}', entity={self.entity_type}, "
                 f"detector={self.detector_class}. Remove PII before calling this agent "
-                f"or set action=PolicyAction.REDACT."
+                f"or set action=PolicyAction.REDACT. "
+                f"See: https://github.com/wimverleyen/praktor.ai#governance-quickstart"
             )
         return base
 

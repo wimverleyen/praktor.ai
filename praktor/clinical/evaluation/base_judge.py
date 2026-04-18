@@ -12,7 +12,7 @@ import re
 from abc import ABC, abstractmethod
 from typing import Any
 
-from settings import create_log
+from praktor.settings import create_log
 
 log = create_log()
 
@@ -48,7 +48,7 @@ class BaseJudge(ABC):
                 f"{self.__class__.__name__}: _eval_prompt and _compare_prompt must be set"
             )
         try:
-            from LLM.llm_interface import AsyncLLMAdapter
+            from praktor.LLM.llm_interface import AsyncLLMAdapter
             self._eval_adapter = AsyncLLMAdapter(
                 prompt_template=self._eval_prompt,
                 model=self._model,

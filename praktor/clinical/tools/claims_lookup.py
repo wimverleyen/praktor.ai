@@ -14,8 +14,8 @@ from __future__ import annotations
 
 import json
 
-from core.tool import ToolResult, register_tool
-from settings import create_log
+from praktor.core.tool import ToolResult, register_tool
+from praktor.settings import create_log
 
 log = create_log()
 
@@ -35,7 +35,7 @@ class ClaimsLookupTool:
             if not member_id_hash:
                 return ToolResult(content="", error="member_id_hash is required")
 
-            from clinical.data.clinical_store import get_clinical_store
+            from praktor.clinical.data.clinical_store import get_clinical_store
             store = get_clinical_store()
 
             drug_class = params.get("drug_class")

@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from settings import create_log
+from praktor.settings import create_log
 
 log = create_log()
 

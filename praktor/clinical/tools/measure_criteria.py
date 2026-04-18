@@ -10,8 +10,8 @@ Input: measure_id string (e.g., "GSD", "KED", "EED-E", "SPD-E", "BPD-E", "MAC", 
 
 from __future__ import annotations
 
-from core.tool import ToolResult, register_tool
-from settings import create_log
+from praktor.core.tool import ToolResult, register_tool
+from praktor.settings import create_log
 
 log = create_log()
 
@@ -391,7 +391,7 @@ class MeasureCriteriaTool:
             return ToolResult(content="", error=f"measure_criteria failed: {e}")
 
     def _get_weight(self, measure_id: str) -> float:
-        from clinical.schemas import HEDIS_MEASURES
+        from praktor.clinical.schemas import HEDIS_MEASURES
         return HEDIS_MEASURES.get(measure_id, {}).get("stars_weight", 1.0)
 
 

@@ -7,8 +7,8 @@ from typing import AsyncGenerator, Any
 
 from langchain_core.prompts import PromptTemplate
 
-from settings import MODEL, CACHE_DIR, CACHE_TTL, create_log
-from LLM.llm_factory import LLMFactory
+from praktor.settings import MODEL, CACHE_DIR, CACHE_TTL, create_log
+from praktor.LLM.llm_factory import LLMFactory
 
 log = create_log()
 

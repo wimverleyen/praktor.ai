@@ -1,4 +1,4 @@
-from LLM.prompt import (CoverLetter,
+from praktor.LLM.prompt import (CoverLetter,
                          CoverLetterImprove, 
                          KeywordsResume, 
                          KeywordsImprove,
@@ -15,13 +15,13 @@ from LLM.prompt import (CoverLetter,
                          PromptEmailThankYou,
                          PromptSearch,
                          PromptMessage)
-from LLM.llm_interface import LLMAdapter
-from LLM.llm_factory import LLMFactory
+from praktor.LLM.llm_interface import LLMAdapter
+from praktor.LLM.llm_factory import LLMFactory
 
-from retrieve_generate import RAGSP, RAGTY
+from praktor.retrieve_generate import RAGSP, RAGTY
 
-from settings import create_log, MODEL, MD, PDF
-from utils import save_markdown, read_markdown
+from praktor.settings import create_log, MODEL, MD, PDF
+from praktor.utils import save_markdown, read_markdown
 
 from typing import Dict
 

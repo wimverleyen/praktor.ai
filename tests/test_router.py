@@ -4,13 +4,11 @@ import asyncio
 from pathlib import Path
 from unittest.mock import AsyncMock, patch, MagicMock
 
-sys.path.insert(0, str(Path(__file__).parent.parent / 'praktor'))
-
 import pytest
 from pydantic import BaseModel
 
-from core.agent_definition import AgentDefinition, MemoryPolicy
-from core.router import Router
+from praktor.core.agent_definition import AgentDefinition, MemoryPolicy
+from praktor.core.router import Router
 
 
 class _SearchInput(BaseModel):
