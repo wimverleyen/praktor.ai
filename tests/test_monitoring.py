@@ -470,10 +470,10 @@ class TestMonitoringCLI:
     _PRAKTOR_DIR  = str(Path(__file__).parent.parent / "praktor")
 
     def _run(self, *args):
-        import os, subprocess
+        import os, subprocess, sys
         env = {**os.environ, "PYTHONPATH": self._PRAKTOR_DIR}
         return subprocess.run(
-            ["python", "-m", "praktor", *args],
+            [sys.executable, "-m", "praktor", *args],
             cwd=self._PROJECT_ROOT,
             capture_output=True, text=True,
             env=env,

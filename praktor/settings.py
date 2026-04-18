@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from dotenv import load_dotenv
 
 import os
@@ -27,9 +29,20 @@ CACHE_TTL = int(os.getenv('CACHE_TTL', '3600'))
 OLLAMA_HOST = os.getenv('OLLAMA_HOST', 'http://localhost:11434')
 
 # --- Observability ---
-# Set OTLP_ENDPOINT to export spans to a collector (e.g. "http://localhost:4317")
-# If unset, spans are printed to stdout (ConsoleSpanExporter) for local dev.
-OTLP_ENDPOINT = os.getenv('OTLP_ENDPOINT', '')
+# PRAKTOR_OTEL_ENABLED=1       — activate OTel export (default: off)
+# PRAKTOR_OTLP_ENDPOINT        — OTLP gRPC collector (default: http://localhost:4317)
+# PRAKTOR_OTEL_BACKEND=phoenix — bootstrap arize-phoenix-otel if installed
+# OTEL_SDK_DISABLED=true       — disable all OTel (test runner safe)
+PRAKTOR_OTEL_ENABLED   = os.getenv('PRAKTOR_OTEL_ENABLED', '').lower() in ('1', 'true', 'yes')
+PRAKTOR_OTLP_ENDPOINT  = os.getenv('PRAKTOR_OTLP_ENDPOINT', os.getenv('OTLP_ENDPOINT', ''))
+PRAKTOR_OTEL_BACKEND   = os.getenv('PRAKTOR_OTEL_BACKEND', '')
+# Legacy alias — keep until all docs are updated
+OTLP_ENDPOINT = PRAKTOR_OTLP_ENDPOINT
+
+# --- Governance / RBAC ---
+PRAKTOR_RBAC_SECRET = os.getenv('PRAKTOR_RBAC_SECRET')  # None = RBAC disabled globally
+PRAKTOR_AUDIT_LOG = os.getenv('PRAKTOR_AUDIT_LOG', 'praktor_audit.jsonl')
+PRAKTOR_AUDIT_MAX_BYTES = int(os.getenv('PRAKTOR_AUDIT_MAX_BYTES', str(100 * 1024 * 1024)))
 
 # --- Logging ---
 _LOG_FILE = 'praktor.ai.log'

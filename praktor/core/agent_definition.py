@@ -1,6 +1,14 @@
+from __future__ import annotations
+
+import hashlib
 from dataclasses import dataclass, field
 from enum import Enum, auto
+from typing import TYPE_CHECKING
+
 from pydantic import BaseModel
+
+if TYPE_CHECKING:
+    from governance.policy import GovernancePolicy
 
 
 class MemoryPolicy(Enum):
@@ -29,6 +37,10 @@ class AgentDefinition:
 
     Adding a new agent = one file with one AgentDefinition instance.
     No changes to schemas, dispatch tables, or consumers required.
+
+    governance_policy: attach a GovernancePolicy to enable PII/PHI detection,
+    audit logging, and RBAC for this agent. Default None = governance disabled,
+    existing behavior unchanged (fully backwards compatible).
     """
 
     name: str
@@ -66,3 +78,32 @@ class AgentDefinition:
 
     max_steps: int = 1
     """1 = single linear chain. >1 = ReAct tool-use loop (requires tools)."""
+
+    prompt_version: str = ""
+    """Optional explicit version label (e.g. 'v1.2.0'). Defaults to first 12 chars of hash."""
+
+    # Auto-computed at post-init — do not set manually.
+    prompt_template_hash: str = field(default="", init=False, repr=False)
+
+    governance_policy: GovernancePolicy | None = None
+    """
+    Optional compliance governance for this agent.
+
+    When set, Agent.run() will:
+    - Run pre_execution DetectorConfigs on all string fields in the payload
+    - Run post_execution DetectorConfigs on the full LLM response
+    - Write an AuditEntry to all configured audit sinks
+    - Raise GovernancePolicyViolation on BLOCK actions
+
+    Governance boundary: detection covers the rendered prompt (all payload string
+    fields) and the final LLM response. Intermediate tool call outputs inside LCEL
+    chains are NOT governed — documented limitation.
+
+    Default None = governance disabled. Backwards compatible with all existing agents.
+    """
+
+    def __post_init__(self) -> None:
+        template_bytes = self.prompt_template.encode("utf-8", errors="replace")
+        self.prompt_template_hash = hashlib.sha256(template_bytes).hexdigest()
+        if not self.prompt_version:
+            self.prompt_version = self.prompt_template_hash[:12]

@@ -2,7 +2,44 @@
 
 General-purpose agentic framework built on LangChain, RabbitMQ, and local or hosted LLMs. Ships with a **ReAct tool-use loop**, **OpenTelemetry observability**, **automated prompt optimization**, and a **continuous monitoring stack** (Prometheus, Grafana, SQLite). Comes with built-in agents for job-application workflows — but any agent is one file.
 
-→ [Architecture deep-dive](ARCHITECTURE.md) · [Contributing guide](CONTRIBUTING.md)
+→ [Architecture deep-dive](ARCHITECTURE.md) · [Contributing guide](CONTRIBUTING.md) · [API Docs](https://praktor.ai)
+
+---
+
+## 30-Second Quickstart
+
+No RabbitMQ, no Docker, no cloud API keys. Just Python and a local LLM.
+
+```python
+import asyncio
+from pydantic import BaseModel
+from praktor.core.agent_definition import AgentDefinition, MemoryPolicy, OutputSink
+from praktor.core.agent import Agent
+
+class QuestionInput(BaseModel):
+    agent_type: str = "question"
+    question: str
+    session_id: str = ""
+
+definition = AgentDefinition(
+    name="question",
+    prompt_template="Answer concisely: {question}",
+    input_schema=QuestionInput,
+    llm_model="qwen2.5",
+    memory_policy=MemoryPolicy.NONE,
+    output_sink=OutputSink.STDOUT,
+)
+
+async def main():
+    agent = Agent(definition)
+    payload = {"agent_type": "question", "question": "What is HIPAA?"}
+    async for chunk in agent.run(payload):
+        print(chunk, end="", flush=True)
+
+asyncio.run(main())
+```
+
+That's it. One file, one agent, local inference.
 
 ---
 
@@ -22,13 +59,74 @@ Producer (transport/producer.py)
 
 ---
 
-## Setup
+## Installation
 
-**1. Install dependencies**
+praktor supports three install paths. **`uv` is recommended** (10x faster than pip, reproducible lockfiles, automatic venv).
+
+### Option 1: uv (recommended)
 
 ```bash
-pip install -r requirements.txt
+# Install uv if you don't have it
+curl -LsSf https://astral.sh/uv/install.sh | sh   # macOS / Linux
+# or: brew install uv
+# or: pipx install uv
+
+# Clone and install
+git clone https://github.com/wimverleyen/praktor.ai.git
+cd praktor.ai
+uv venv && uv pip install -e .
+
+# Or via Makefile
+make install         # core
+make install-dev     # + pytest, black
+make install-all     # + presidio, kafka, minio, otel, docs
 ```
+
+### Option 2: pip
+
+```bash
+git clone https://github.com/wimverleyen/praktor.ai.git
+cd praktor.ai
+python -m venv .venv && source .venv/bin/activate
+pip install -e .
+```
+
+### Option 3: Docker
+
+No Python install required. See [Docker section](#running-with-docker) below.
+
+```bash
+docker build -t praktor .
+docker compose up
+```
+
+### Optional extras
+
+| Extra | Adds | Install |
+|-------|------|---------|
+| `presidio` | ML-based PHI detection (names, addresses, MRN) | `uv pip install -e ".[presidio]"` |
+| `kafka` | KafkaAuditSink for high-throughput audit logs | `uv pip install -e ".[kafka]"` |
+| `minio` | MinIO/S3 audit sink with date partitioning | `uv pip install -e ".[minio]"` |
+| `otel` | OpenTelemetry trace export | `uv pip install -e ".[otel]"` |
+| `docs` | mkdocs + mkdocs-material for building docs | `uv pip install -e ".[docs]"` |
+| `dev` | pytest, pytest-asyncio, black | `uv pip install -e ".[dev]"` |
+
+Combine with commas: `uv pip install -e ".[dev,kafka,minio,presidio]"`
+
+---
+
+## Setup
+
+**1. Install Ollama** (for local LLM inference)
+
+```bash
+brew install ollama                                    # macOS
+curl -fsSL https://ollama.ai/install.sh | sh           # Linux
+ollama pull qwen2.5                                    # download a model
+ollama serve                                           # start the daemon (if not running)
+```
+
+Other models work too: `llama3.1`, `mistral`, `phi3`, anything Ollama supports. Set `PRAKTOR_MODEL` to switch.
 
 **2. Configure environment**
 
@@ -51,27 +149,112 @@ cp .env.example .env
 | `MD` | — | Directory for markdown output files |
 | `PDF` | — | Directory containing input PDF files |
 | `VECTOR_DB` | — | Path for the FAISS vector store |
+| `PRAKTOR_AUDIT_LOG` | `praktor_audit.jsonl` | Governance audit log path |
+| `PRAKTOR_RBAC_SECRET` | — | HMAC secret for RBAC tokens (opt-in) |
 
-**3. Start RabbitMQ**
+**3. Start RabbitMQ** (only needed for queue-based dispatch)
 
 ```bash
 docker run -d --name rabbitmq -p 5672:5672 rabbitmq:3
 ```
+
+Skip this step if you only use `DirectTransport` (in-process, see [30-second quickstart](#30-second-quickstart)).
+
+**4. Seed the vector store** (only needed for `job_interview` agent)
+
+```bash
+uv run python scripts/init_vector_db.py --pdf-dir /path/to/pdfs --db-path /path/to/vector_db
+```
+
 
 ---
 
 ## Running
 
 ```bash
-# Start the async consumer
-python -m praktor receive
+uv run python -m praktor receive
+```
 
 # Publish a task
 python -m praktor publish --agent cover_letter \
   --data '{"job_title":"VP Engineering","company":"Acme","job_description":"..."}'
 
-# List registered agents and their required fields
-python -m praktor list
+```bash
+# From JSON string
+uv run python -m praktor publish --agent thank_you \
+  --data '{"adjective":"professional","position":"VP Data Science","content":"Great conversation about GenAI strategy"}'
+
+# From stdin
+echo '{"agent_type":"search","search":"concept drift","content":"production ML systems"}' \
+  | uv run python -m praktor publish
+
+# Legacy producer methods (still work)
+uv run python -m praktor agent thankyou
+uv run python -m praktor agent search
+uv run python -m praktor agent message
+```
+
+**List registered agents and their required fields:**
+
+```bash
+uv run python -m praktor list
+```
+
+> **Tip:** if you've activated the venv with `source .venv/bin/activate`, you can drop the `uv run` prefix and just use `python -m praktor ...`.
+
+---
+
+## Running with Docker
+
+Docker bundles praktor with no Python install required. The image uses `uv` for fast, reproducible builds and runs as a non-root user.
+
+### Build
+
+```bash
+# Core image (~250 MB)
+docker build -t praktor .
+
+# With enterprise audit sinks
+docker build -t praktor --build-arg EXTRAS="kafka,minio" .
+
+# With ML-based PHI detection
+docker build -t praktor --build-arg EXTRAS="presidio" .
+```
+
+### Run standalone
+
+`--network host` lets the container reach Ollama on the host machine.
+
+```bash
+# Start consumer
+docker run --rm --network host praktor receive
+
+# Publish a task
+docker run --rm --network host praktor publish --agent thank_you \
+  --data '{"adjective":"warm","position":"CTO","content":"Great chat about AI governance"}'
+
+# List agents
+docker run --rm --network host praktor list
+```
+
+### Run with docker-compose (RabbitMQ + consumer + audit volume)
+
+```bash
+docker compose up                    # start RabbitMQ + consumer
+docker compose run --rm praktor publish --agent search \
+  --data '{"search":"HIPAA compliance","content":"healthcare AI"}'
+```
+
+`docker-compose.yml` provisions a named `praktor-audit` volume so audit logs survive container restarts.
+
+### Override config
+
+```bash
+docker run --rm --network host \
+  -e PRAKTOR_MODEL=llama3.1 \
+  -e PRAKTOR_CONCURRENCY=8 \
+  -v $(pwd)/audit:/app/audit \
+  praktor receive
 ```
 
 ---
@@ -556,8 +739,8 @@ The UI reads from `~/.praktor/monitoring.db` — start the consumer and publish 
 ## Tests
 
 ```bash
-pytest tests/
-# 99 core tests + 23 PHI gate tests + 17 HEDIS agent tests + 40 judge tests (BaseJudge, HEDISJudge, DiabetesHEDISJudge)
+uv run pytest tests/ -q
+# 267 tests — governance, evaluation, ReAct, monitoring, clinical, judge (all mocked)
 
 # PHI gate tests — IRON RULE: must pass before FAISS write path ships
 PYTHONPATH=praktor pytest tests/test_clinical_privacy.py -v
@@ -567,6 +750,21 @@ PYTHONPATH=praktor pytest tests/test_hedis_agent.py -v
 ```
 
 All tests mock the LLM and filesystem. No live Ollama, RabbitMQ, or FAISS needed.
+
+### Dev commands (Makefile)
+
+```bash
+make help            # show all targets
+make install-dev     # install with dev deps via uv
+make test            # run full test suite
+make lint            # black format check
+make benchmark       # governance overhead benchmarks
+make docs            # build mkdocs site
+make serve-docs      # preview docs at localhost:8000
+make docker          # build Docker image
+make docker-up       # start RabbitMQ + consumer stack
+make clean           # remove build artifacts
+```
 
 ---
 
@@ -591,3 +789,33 @@ python -m praktor prompt activate <agent> <version_id>
 python -m praktor prompt eval <agent> <version_id> -q "..." -r "..."
 python -m praktor prompt optimize <agent> -x examples.json --goal "..."
 ```
+
+---
+
+## Governance quickstart
+
+```python
+from core.agent_definition import AgentDefinition
+from governance.policy import GovernancePolicy, DetectorConfig, PolicyAction, AuditSinkType
+
+policy = GovernancePolicy(
+    pre_execution=[
+        DetectorConfig(
+            detector_class="governance.detectors.RegexDetector",
+            entities=["US_SSN", "EMAIL_ADDRESS"],
+            action=PolicyAction.REDACT,
+        )
+    ],
+    audit_sinks=[AuditSinkType.STDOUT],
+)
+
+defn = AgentDefinition(
+    name="my_agent",
+    prompt_template="Answer: {text}",
+    governance_policy=policy,
+)
+```
+
+PII/PHI in any payload field is redacted before the LLM sees it. Every run produces
+an audit entry. Set `action=PolicyAction.BLOCK` to halt execution instead of redacting.
+Set `dry_run=True` to log findings without raising or writing to sinks.

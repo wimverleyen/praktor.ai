@@ -199,7 +199,7 @@ def parse_diabetes_next_best_action(final_answer: str, member_id_hash: str) -> d
         r"^DRAFT_MESSAGE:\s*(.+?)(?=^[A-Z_]+:|$)", final_answer,
         re.MULTILINE | re.DOTALL
     )
-    draft = draft_match.group(1).strip() if draft_match else final_answer
+    draft = draft_match.group(1).strip() if draft_match else ""
 
     action_type = extract("ACTION_TYPE", final_answer, "escalate")
     closure_prob = extract_float("CLOSURE_PROBABILITY", final_answer, 0.0)

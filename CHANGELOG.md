@@ -1,5 +1,60 @@
 # Changelog
 
+## [0.3.0.0] - 2026-04-18 — Phase 3: Governance Wiring + Evaluation Integration
+
+### Added
+
+- **Governance wiring in `Agent.run()`** — pre-execution detection (BLOCK/REDACT/FLAG) runs on every payload field before the LLM call; post-execution detection runs on the full buffered response before yielding. PHI never leaves the process boundary.
+- **Buffer-then-yield** — when `governance_policy` is set, all response chunks are accumulated before any are yielded so post-execution detection fires first. Non-policy agents stream unchanged (zero latency impact).
+- **Evaluation passes wired** — `EvaluationPass` runs after post-execution detection; evaluator instances cached in `Agent.__init__` (no per-run import overhead). Scoring recorded in `AuditEntry.evaluation_scores`.
+- **`finally` block for audit writes** — `AuditEntry` is written unconditionally on success, BLOCK, and exception paths; pre-execution BLOCK events are audited even though the LLM never ran.
+- **`GovernancePolicy(dry_run=True)`** — detectors run and log to stderr but no exceptions are raised and no sinks are written; test ergonomics escape hatch.
+- **Structured `GovernancePolicyViolation`** — adds `field_name`, `entity_type`, `detector_class` fields + helpful `__str__` with remediation hint.
+- **Memory stores redacted response** — `memory.save()` receives the post-governance (possibly redacted) `final_response`, not the original LLM output.
+- **Governance quickstart in README** — 10-line snippet showing STDOUT sink + REDACT policy.
+- **`EvaluationPass`** — post-execution scoring protocol with `RegexToxicityEvaluator` and `EmbeddingRelevanceEvaluator`.
+- **`KafkaAuditSink`** — Avro messages to configurable topic (`pip install praktor[kafka]`).
+- **`MinIOAuditSink`** — JSON objects partitioned by date (`pip install praktor[minio]`).
+- **LLM judge evaluators** — `LLMJudge` for correctness/toxicity/relevance scoring via LLM-as-judge pattern.
+- **OTel lazy init** — `ConsoleSpanExporter` deferred until first use; `OTEL_SDK_DISABLED=true` disables entirely (prevents I/O-on-closed-file in test suites).
+- **`test_audit_entry_written_on_pre_execution_block`** — verifies audit entry written even when BLOCK fires before LLM executes.
+- **`test_memory_saves_redacted_response`** — verifies memory stores redacted text, not original PHI.
+- **`test_governance_runs_in_react_path`** — verifies post-execution BLOCK fires on ReAct Final Answer.
+- **267 tests** — all passing, 0 xfailed (down from 8).
+
+### Changed
+
+- `TestAgentGovernanceHooks` and `TestAgentEvaluationHooks` un-xfailed — 13 previously deferred tests now passing.
+
+### Fixed
+
+- `PolicyAction.REDACT` now actually replaces matched spans with `[REDACTED:<entity_type>]` in payload fields before LLM execution.
+- Pre-execution governance runs per-field (not on a detached scratch variable).
+- `GovernancePolicyViolation` structured fields enable actionable error messages with field name, entity type, and detector class.
+- `test_react.py` patch targets corrected from `core.tool.get_tool` to `core.agent.get_tool` (module-binding vs. module-attribute distinction).
+- `test_async_adapter.py` cache isolation — patches module-level `_cache` with an in-memory dict per test to prevent diskcache persistence across test runs.
+
+---
+
+## v0.2.0 — Phase 1: Governance Foundation
+
+### New
+
+- **GovernancePolicy** on `AgentDefinition` — declarative compliance config (opt-in, backwards compatible)
+- **PII/PHI detection** — `RegexDetector` (zero-dep, 6 patterns) + `PresidioDetector` (optional ML-based)
+- **PolicyAction** enum — ALLOW, REDACT, FLAG, BLOCK with pre/post execution hooks
+- **AuditEntry** — hash-chained JSONL entries with SHA-256 prompt/response digests (PHI never stored)
+- **LocalFileAuditSink** — append-only with `filelock` concurrent write safety
+- **StdoutAuditSink** — for development/testing
+- **RBAC** — HMAC-SHA256 tokens, 5-min TTL, in-process replay protection, fail-closed
+- **OpenTelemetry Span wrapper** — `otel_trace_id` propagated to `AuditEntry`
+- **Transport protocol** — `DirectTransport`, `RabbitMQTransport`, `HTTPTransport`
+- **Benchmark suite** — framework overhead measurement (baseline, no-governance, regex-detector)
+- **pyproject.toml** — hatchling build, `[presidio]`, `[otel]`, `[dev]` extras
+- **48 tests** — full governance coverage, all mocked
+
+---
+
 ## [0.2.0.0] - 2026-04-17
 
 ### Added

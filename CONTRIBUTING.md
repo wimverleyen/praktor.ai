@@ -6,30 +6,78 @@ One file to add an agent. One command to test. This document covers project setu
 
 ## Project setup
 
+praktor uses [`uv`](https://github.com/astral-sh/uv) for dependency management (10x faster than pip, automatic venv, reproducible).
+
+**1. Install uv**
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh   # macOS / Linux
+# or: brew install uv
+# or: pipx install uv
+```
+
+**2. Clone and install**
+
 ```bash
 git clone https://github.com/wimverleyen/praktor.ai.git
 cd praktor.ai
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-cp .env.example .env
+
+# Create venv + install in editable mode with dev dependencies
+uv venv && uv pip install -e ".[dev]"
+
+# Or use the Makefile
+make install-dev
 ```
 
-Edit `.env` with your paths. For local LLMs, install [Ollama](https://ollama.ai) and pull a model:
+**3. Configure environment**
 
 ```bash
+cp .env.example .env
+# edit .env with your paths and API keys
+```
+
+**4. Install Ollama and pull a model** (for local LLM inference)
+
+```bash
+brew install ollama                              # macOS
+curl -fsSL https://ollama.ai/install.sh | sh    # Linux
 ollama pull qwen2.5
 ```
 
-Start RabbitMQ:
+**5. Start RabbitMQ** (only needed for queue-based dispatch)
 
 ```bash
 docker run -d --name rabbitmq -p 5672:5672 rabbitmq:3
 ```
 
-Run tests (no live services needed — everything is mocked):
+**6. Run tests** (no live services needed — everything is mocked)
 
 ```bash
-pytest tests/
+make test
+# or: uv run pytest tests/ -x -v
+```
+
+### Install variants
+
+```bash
+make install         # core only
+make install-dev     # + pytest, black (default for contributors)
+make install-all     # + presidio, kafka, minio, otel, docs — everything
+
+# Or individual extras:
+uv pip install -e ".[presidio]"        # ML-based PHI detection
+uv pip install -e ".[kafka,minio]"     # enterprise audit sinks
+uv pip install -e ".[otel]"            # OpenTelemetry trace export
+uv pip install -e ".[docs]"            # mkdocs for building docs
+```
+
+### Docker-based development
+
+If you prefer not to install Python locally:
+
+```bash
+docker build -t praktor --build-arg EXTRAS="dev" .
+docker compose up                   # starts RabbitMQ + consumer
 ```
 
 ---
@@ -178,6 +226,52 @@ Supported model strings:
 | anything else | Ollama (local) | none |
 
 `LLMFactory` in `LLM/llm_factory.py` handles the routing. To add a new provider, add a branch there.
+
+---
+
+## Adding governance to an agent
+
+Any agent becomes governed by adding a `GovernancePolicy`:
+
+```python
+from core.agent_definition import AgentDefinition, MemoryPolicy, OutputSink
+from governance import GovernancePolicy, DetectorConfig, PolicyAction, AuditSinkType
+
+GovernerDefinition = AgentDefinition(
+    name="medical_qa",
+    prompt_template="Answer: {question}",
+    input_schema=MedicalInput,
+    governance_policy=GovernancePolicy(
+        pre_execution=[
+            DetectorConfig(
+                detector_class="governance.detectors.RegexDetector",
+                entities=["US_SSN", "PHONE_NUMBER", "EMAIL_ADDRESS"],
+                action=PolicyAction.REDACT,  # PHI scrubbed before LLM sees it
+            ),
+        ],
+        post_execution=[
+            DetectorConfig(
+                detector_class="governance.detectors.RegexDetector",
+                entities=["US_SSN"],
+                action=PolicyAction.BLOCK,  # Halt if LLM generates PHI
+            ),
+        ],
+        audit_sinks=[AuditSinkType.LOCAL_FILE],
+        rbac_required_roles=["hipaa-reader"],
+    ),
+)
+```
+
+**Actions:**
+
+| Action | Pre-execution | Post-execution |
+|--------|-------------|---------------|
+| `ALLOW` | No-op (default) | No-op |
+| `REDACT` | Replace PHI with `[REDACTED]` before LLM | Replace in response text |
+| `FLAG` | Audit entry flagged, agent continues | Audit entry flagged |
+| `BLOCK` | Raise `GovernancePolicyViolation`, halt | Raise violation, halt |
+
+For evaluation passes (toxicity scoring, relevance checks), see the [Evaluators API docs](https://praktor.ai/api/evaluators/).
 
 ---
 

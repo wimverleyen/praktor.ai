@@ -1,3 +1,4 @@
+from __future__ import annotations
 import time
 import json
 import os
@@ -9,46 +10,85 @@ from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExport
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.trace import StatusCode
 
-from settings import create_log
+from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult
+from settings import PRAKTOR_OTEL_ENABLED, PRAKTOR_OTLP_ENDPOINT, PRAKTOR_OTEL_BACKEND, create_log
 
 log = create_log()
 
 # ---------------------------------------------------------------------------
-# Tracer setup — configured once at module load.
+# Tracer setup.
 #
-# Set OTLP_ENDPOINT to enable gRPC export to a collector (Jaeger, Grafana, etc.).
-# If unset, falls back to ConsoleSpanExporter for local dev.
+# OTel is NOT initialized at module import time. Call init_tracer_provider()
+# explicitly at process startup (cmd_receive in __main__.py) so test runners
+# can import this module without triggering network connections.
+#
+# OTEL_SDK_DISABLED=true always wins — disables OTel entirely.
 # ---------------------------------------------------------------------------
 
-_OTLP_ENDPOINT = os.getenv("OTLP_ENDPOINT", "")
-_OTEL_QUIET = os.getenv("OTEL_SDK_DISABLED", "").lower() in ("true", "1", "yes")
+_OTEL_SDK_DISABLED = os.getenv("OTEL_SDK_DISABLED", "").lower() in ("true", "1", "yes")
+_tracer_initialized = False
 
 _resource = Resource.create({"service.name": "praktor.ai"})
+
+
+class _NoOpExporter(SpanExporter):
+    def export(self, spans):
+        return SpanExportResult.SUCCESS
+    def shutdown(self):
+        pass
+
+
 _provider = TracerProvider(resource=_resource)
-
-if _OTEL_QUIET:
-    from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult
-    class _NoOpExporter(SpanExporter):
-        def export(self, spans):
-            return SpanExportResult.SUCCESS
-        def shutdown(self):
-            pass
-    _exporter = _NoOpExporter()
-elif _OTLP_ENDPOINT:
-    try:
-        from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
-        _exporter = OTLPSpanExporter(endpoint=_OTLP_ENDPOINT, insecure=True)
-        log.info(f"OTel: exporting spans to {_OTLP_ENDPOINT}")
-    except Exception as e:
-        log.warning(f"OTel: OTLP exporter failed to init ({e}), falling back to console")
-        _exporter = ConsoleSpanExporter()
-else:
-    _exporter = ConsoleSpanExporter()
-
-_provider.add_span_processor(BatchSpanProcessor(_exporter))
+_provider.add_span_processor(BatchSpanProcessor(_NoOpExporter()))
 trace.set_tracer_provider(_provider)
-
 tracer = trace.get_tracer("praktor.ai")
+
+
+def init_tracer_provider() -> None:
+    """
+    Configure the OTel TracerProvider with the appropriate exporter.
+
+    Call once at process startup before handling any requests. Safe to call
+    multiple times — subsequent calls are no-ops.
+
+    Env vars:
+        OTEL_SDK_DISABLED=true       — disable all OTel (always wins)
+        PRAKTOR_OTEL_ENABLED=1       — activate export
+        PRAKTOR_OTLP_ENDPOINT        — gRPC collector address
+        PRAKTOR_OTEL_BACKEND=phoenix — bootstrap arize-phoenix-otel
+    """
+    global _tracer_initialized, _provider, tracer
+    if _tracer_initialized or _OTEL_SDK_DISABLED:
+        return
+    _tracer_initialized = True
+
+    try:
+        if PRAKTOR_OTEL_BACKEND == "phoenix":
+            try:
+                from phoenix.otel import register as _phoenix_register
+                _phoenix_register(project_name="praktor.ai")
+                log.info("OTel: arize-phoenix bootstrap complete")
+            except ImportError:
+                log.warning("OTel: PRAKTOR_OTEL_BACKEND=phoenix but arize-phoenix-otel not installed")
+
+        if not PRAKTOR_OTEL_ENABLED:
+            return
+
+        if PRAKTOR_OTLP_ENDPOINT:
+            from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+            exporter: SpanExporter = OTLPSpanExporter(endpoint=PRAKTOR_OTLP_ENDPOINT, insecure=True)
+            log.info(f"OTel: exporting spans to {PRAKTOR_OTLP_ENDPOINT}")
+        else:
+            exporter = ConsoleSpanExporter()
+            log.info("OTel: no endpoint set, using ConsoleSpanExporter")
+
+        new_provider = TracerProvider(resource=_resource)
+        new_provider.add_span_processor(BatchSpanProcessor(exporter))
+        trace.set_tracer_provider(new_provider)
+        _provider = new_provider
+        tracer = trace.get_tracer("praktor.ai")
+    except Exception as e:
+        log.warning(f"OTel: init_tracer_provider failed ({e}), spans will be no-ops")
 
 
 # ---------------------------------------------------------------------------

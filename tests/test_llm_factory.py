@@ -21,11 +21,12 @@ class TestLLMFactory:
         mock_ollama.assert_called_once_with(model='qwen2.5', temperature=0.0)
 
     def test_create_gpt_instruct(self):
-        pytest.importorskip("langchain_openai")
-        with patch('langchain_openai.llms.OpenAI') as mock_openai:
-            mock_openai.return_value = MagicMock()
+        fake_openai = MagicMock()
+        fake_module = MagicMock()
+        fake_module.OpenAI = fake_openai
+        with patch.dict('sys.modules', {'langchain_openai': MagicMock(), 'langchain_openai.llms': fake_module}):
             self.factory.create_llm('gpt-3.5-turbo-instruct')
-            mock_openai.assert_called_once_with(model='gpt-3.5-turbo-instruct', temperature=0.0)
+        fake_openai.assert_called_once_with(model='gpt-3.5-turbo-instruct', temperature=0.0)
 
     def test_create_claude_sonnet(self):
         pytest.importorskip("langchain_anthropic")

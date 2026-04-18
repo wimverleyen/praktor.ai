@@ -52,15 +52,16 @@ class RAGTY:
 
     def generate_data(self, data):
 
-        log.debug(f'DEBUG: RAG prompt: {self.__prompt.format(adjective=data['adjective'], content=data['content'], \
-                                                             position=data['position'])}')
-        results = self.__vector_store.similarity_search_with_score(query=self.__prompt.format(adjective=data['adjective'], content=data['content'], position=data['position']), k=25)
-        log.debug(f'DEBUG: # of results: {len(results)}')
+        adj, cont, pos = data["adjective"], data["content"], data["position"]
+        log.debug(f"DEBUG: RAG prompt: {self.__prompt.format(adjective=adj, content=cont, position=pos)}")
+        results = self.__vector_store.similarity_search_with_score(
+            query=self.__prompt.format(adjective=adj, content=cont, position=pos), k=25
+        )
+        log.debug(f"DEBUG: # of results: {len(results)}")
         for doc, score in results:
             log.debug(f"DEBUG: RAG - vector database [SIM={score:3f}] {doc.page_content} [{doc.metadata}]")
 
-        log.debug(f'DEBUG: RAG prompt: {self.__prompt.format(adjective=data['adjective'], content=data['content'], \
-                                                             position=data['position'])}')
+        log.debug(f"DEBUG: RAG prompt: {self.__prompt.format(adjective=adj, content=cont, position=pos)}")
 
         response = self.__chain.invoke(input={'adjective':data['adjective'], 'content': data['content'], \
                                               'position': data['position']})

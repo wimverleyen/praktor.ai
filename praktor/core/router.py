@@ -1,9 +1,11 @@
+from __future__ import annotations
+
 import json
 from typing import AsyncGenerator
 
 from core.agent import Agent
 from core.agent_definition import AgentDefinition
-from settings import new_request_id, create_log
+from settings import PRAKTOR_RBAC_SECRET, new_request_id, create_log
 
 log = create_log()
 
@@ -16,6 +18,11 @@ class Router:
     each incoming message against the agent's Pydantic input_schema, then
     streams the response back as an async generator.
 
+    RBAC: if an agent's GovernancePolicy has rbac_required_roles, the caller
+    must include a "caller_token" field in the message. The token is verified
+    via HMAC-SHA256 against PRAKTOR_RBAC_SECRET. Fail-closed: missing secret
+    + non-empty roles = ConfigurationError (never silently open access).
+
     Adding a new agent:
         router.register(MyAgentDefinition)
     That's it — no changes to the consumer or dispatch table.
@@ -25,7 +32,24 @@ class Router:
         self._agents: dict[str, Agent] = {}
 
     def register(self, definition: AgentDefinition) -> None:
-        """Compile and register an agent. Call once at process startup."""
+        """
+        Compile and register an agent. Call once at process startup.
+
+        ConfigurationError raised at registration time if:
+        - rbac_required_roles is non-empty AND PRAKTOR_RBAC_SECRET is absent.
+        Fail-closed at startup, not at request time.
+        """
+        from governance.rbac import ConfigurationError
+
+        if definition.governance_policy:
+            policy = definition.governance_policy
+            if policy.rbac_required_roles and not PRAKTOR_RBAC_SECRET:
+                raise ConfigurationError(
+                    f"Agent '{definition.name}' requires RBAC roles "
+                    f"{policy.rbac_required_roles} but PRAKTOR_RBAC_SECRET is not set. "
+                    "Set PRAKTOR_RBAC_SECRET in the environment to enable RBAC."
+                )
+
         self._agents[definition.name] = Agent(definition)
         log.info(f"Registered agent: '{definition.name}' model={definition.llm_model}")
 
@@ -37,9 +61,21 @@ class Router:
         """
         Parse, validate, and route a raw queue message.
 
-        Raises ValueError for unknown agent_type or schema validation errors.
-        All other exceptions propagate to the caller (consumer handles nack).
+        Message format:
+            {
+                "agent_type": "...",
+                "session_id": "...",          # optional
+                "caller_token": "...",         # required if agent has rbac_required_roles
+                ... agent-specific fields ...
+            }
+
+        Raises:
+            ValueError: unknown agent_type or schema validation failure
+            RBACError:  invalid/expired/replayed token, missing required role
+            GovernancePolicyViolation: pre-execution policy BLOCK
         """
+        from governance.rbac import verify_token, RBACError
+
         data = json.loads(raw)
         agent_type = data.get("agent_type")
 
@@ -54,7 +90,33 @@ class Router:
 
         agent = self._agents[agent_type]
 
-        # Validate against the agent's Pydantic input schema
+        # ----------------------------------------------------------------
+        # RBAC check (only when governance_policy has rbac_required_roles)
+        # ----------------------------------------------------------------
+        caller_identity = "anonymous"
+        policy = agent.definition.governance_policy
+
+        if policy and policy.rbac_required_roles:
+            caller_token = data.get("caller_token", "")
+            if not caller_token:
+                raise RBACError(
+                    f"Agent '{agent_type}' requires RBAC token but 'caller_token' "
+                    "field is missing from the message."
+                )
+            identity = verify_token(
+                token=caller_token,
+                secret=PRAKTOR_RBAC_SECRET,
+                required_roles=policy.rbac_required_roles,
+            )
+            caller_identity = identity.caller_id
+            log.debug(
+                f"RBAC verified caller='{caller_identity}' "
+                f"roles={identity.roles} agent='{agent_type}'"
+            )
+
+        # ----------------------------------------------------------------
+        # Schema validation
+        # ----------------------------------------------------------------
         try:
             validated = agent.definition.input_schema(**data)
         except Exception as e:
@@ -63,7 +125,11 @@ class Router:
         session_id = data.get("session_id") or new_request_id()
         log.debug(f"Dispatching agent_type='{agent_type}' session={session_id}")
 
-        async for chunk in agent.run(validated.model_dump(), session_id):
+        async for chunk in agent.run(
+            validated.model_dump(),
+            session_id,
+            caller_identity=caller_identity,
+        ):
             yield chunk
 
 

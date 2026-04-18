@@ -1,0 +1,73 @@
+site_name: praktor.ai
+site_description: Local-first agentic framework with built-in governance for regulated industries
+site_url: https://praktor.ai
+repo_url: https://github.com/wimverleyen/praktor.ai
+repo_name: wimverleyen/praktor.ai
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: deep purple
+      accent: amber
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: deep purple
+      accent: amber
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.sections
+    - navigation.expand
+    - content.code.copy
+    - search.highlight
+
+nav:
+  - Home: index.md
+  - Architecture: architecture.md
+  - API Reference:
+    - Core:
+      - Agent: api/agent.md
+      - AgentDefinition: api/agent_definition.md
+      - Router: api/router.md
+    - Governance:
+      - GovernancePolicy: api/governance_policy.md
+      - Detectors: api/detectors.md
+      - Evaluators: api/evaluators.md
+      - Audit: api/audit.md
+      - RBAC: api/rbac.md
+    - Transport:
+      - Consumer: api/consumer.md
+      - Producer: api/producer.md
+    - LLM:
+      - LLMFactory: api/llm_factory.md
+      - AsyncLLMAdapter: api/llm_adapter.md
+  - Compliance:
+    - HIPAA: compliance/hipaa.md
+  - Contributing: contributing.md
+  - Changelog: changelog.md
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [praktor]
+          options:
+            show_source: true
+            show_root_heading: true
+            heading_level: 2
+
+markdown_extensions:
+  - admonition
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - tables
+  - toc:
+      permalink: true
