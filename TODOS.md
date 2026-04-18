@@ -123,3 +123,51 @@ the corruption is invisible in dashboards but makes cross-type comparisons meani
 on `judge_evals.judge_type`. Also add a DB index (`CREATE INDEX IF NOT EXISTS ...`).
 
 **Context:** Identified by adversarial review (2026-04-17) during `/ship`.
+
+---
+
+## [AIGov] Signing key registration for production Attestations
+
+**What:** Before any Attestation leaves a dev environment, the enterprise needs a registered public key for verification. Define how the public key is registered with ERM, how key rotation works, and whether AWS KMS / HSM is available.
+
+**Why:** An attestation signed with an unregistered ephemeral key is unverifiable as a risk assessment artifact. The CISO will ask "how do I verify this signature?" on first demo.
+
+**Pros:** Attestations become genuine compliance artifacts, not just signed JSON.
+
+**Cons:** Requires infrastructure conversation with CISO / ERM before production deployment.
+
+**Context:** Identified in `/plan-eng-review` (2026-04-18). Design Open Question 4. Current plan adds a WARNING log when using the dev ephemeral key. Prod path: `AIGOV_SIGNING_KEY_PATH` env var (PEM) or `AIGOV_KMS_KEY_ARN` for KMS-backed signing.
+
+**Depends on / blocked by:** Conversation with CISO / ERM about available KMS infrastructure. Must resolve before PR5 (Attestation) is deployed to production.
+
+---
+
+## [AIGov] Batch DuckDB writes for obligation events
+
+**What:** Add `write_events(events: list[ObligationEvent])` batch path to `praktor/aigov/ledger/store.py` — wraps all inserts in one transaction, acquires filelock once per run.
+
+**Why:** Current plan acquires filelock once per event. For 11 obligations per run, that's 11× filelock acquisitions. Batch write = ~5ms vs ~55ms for 11 individual writes.
+
+**Pros:** Significant latency reduction with no observable behavior change.
+
+**Cons:** Slightly more complex `store.py` (two write methods).
+
+**Context:** Identified in `/plan-eng-review` (2026-04-18). v0.5.0 ships `write_event()` per-event via `asyncio.to_thread()`. Batch path is a v0.5.1 optimization.
+
+**Depends on / blocked by:** PR2 (ledger/store.py) must land first.
+
+---
+
+## [AIGov] Per-agent SLO overrides for low-frequency agents
+
+**What:** Add `govrun_slo_hours: int = 1` field to `AgentDefinition`. Overnight batch agents can set `govrun_slo_hours=24` so their G-RUN evidence is not stale after 1 hour.
+
+**Why:** The AIGov spec sets G-RUN SLO at 1 hour globally. Clinical agents running once a day will show permanent AMBER, making the scoreboard useless for batch deployment patterns.
+
+**Pros:** Enterprise scoreboard is meaningful for all agent cadences.
+
+**Cons:** Deviates from AIGov spec SLO defaults. Requires documenting override semantics.
+
+**Context:** Identified in `/plan-eng-review` (2026-04-18). High priority before first ERM demo with batch agents.
+
+**Depends on / blocked by:** PR4 (AgentDefinition changes) + PR2 (scoreboard SLO query).
