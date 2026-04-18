@@ -18,6 +18,7 @@ import pytest
 
 class TestMessage:
 
+    @patch('agent_method.MD', '/tmp/')
     @patch('agent_method.save_markdown')
     @patch('agent_method.LLMAdapter')
     def test_message_calls_llm_and_saves(self, mock_adapter_cls, mock_save):
@@ -38,6 +39,7 @@ class TestMessage:
 
 class TestThankYouEmail:
 
+    @patch('agent_method.MD', '/tmp/')
     @patch('agent_method.save_markdown')
     @patch('agent_method.LLMAdapter')
     def test_thank_you_calls_llm_and_saves(self, mock_adapter_cls, mock_save):
@@ -61,6 +63,7 @@ class TestThankYouEmail:
 
 class TestSearch:
 
+    @patch('agent_method.MD', '/tmp/')
     @patch('agent_method.save_markdown')
     @patch('agent_method.LLMAdapter')
     def test_search_calls_llm_and_saves(self, mock_adapter_cls, mock_save):
@@ -79,6 +82,7 @@ class TestSearch:
 
 class TestWriteCoverLetter:
 
+    @patch('agent_method.MD', '/tmp/')
     @patch('agent_method.save_markdown')
     @patch('agent_method.LLMAdapter')
     def test_cover_letter_multi_pass(self, mock_adapter_cls, mock_save):
@@ -104,6 +108,7 @@ class TestWriteCoverLetter:
 
 class TestJobApplication:
 
+    @patch('agent_method.MD', '/tmp/')
     @patch('agent_method.save_markdown')
     @patch('agent_method.LLMAdapter')
     def test_job_application_saves_resume(self, mock_adapter_cls, mock_save):
