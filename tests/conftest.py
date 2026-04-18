@@ -1,12 +1,20 @@
 """
 Test configuration and shared fixtures.
 
-Stubs out heavy dependencies (langchain, langchain_community, etc.) so the
-test suite runs without installing the full ML dependency stack. Tests that
-mock agent.run() or adapter.astream() never reach these imports at runtime.
+Sets OTEL_SDK_DISABLED=true before any test module imports opentelemetry.
+Without this, the ConsoleSpanExporter (initialized at module load in
+observability.py) holds a reference to stdout that gets closed after the
+first test, causing "I/O operation on closed file" errors in subsequent
+tests when BatchSpanProcessor tries to flush.
+
+Also stubs out heavy dependencies (langchain, langchain_community, etc.) so
+the test suite runs without installing the full ML dependency stack.
 """
+import os
 import sys
 from unittest.mock import MagicMock, AsyncMock
+
+os.environ.setdefault("OTEL_SDK_DISABLED", "true")
 
 # ---------------------------------------------------------------------------
 # Stub langchain at collection time so modules that import it at module level

@@ -23,77 +23,13 @@ MY 2026 diabetes measures: GSD, KED, EED-E, SPD-E, BPD-E.
 from __future__ import annotations
 
 import json
-import re
-from dataclasses import dataclass, field
 from typing import Any
 
 from settings import create_log
+from clinical.evaluation.base_judge import BaseJudge
+from clinical.schemas import DiabetesJudgeScore  # noqa: F401 — re-export for callers
 
 log = create_log()
-
-
-# ---------------------------------------------------------------------------
-# Result dataclass
-# ---------------------------------------------------------------------------
-
-@dataclass
-class DiabetesJudgeScore:
-    """
-    10-criterion quality score for a diabetes HEDIS recommendation.
-
-    5 base + 5 diabetes-specific dimensions.
-    """
-    recommendation_id: str
-    # --- 5 base performance dimensions ---
-    accuracy: float = 5.0
-    completeness: float = 5.0
-    relevance: float = 5.0
-    conciseness: float = 5.0
-    clarity: float = 5.0
-    # --- 5 diabetes extensions ---
-    inertia_detection_accuracy: float = 5.0      # 0–10: inertia correctly flagged?
-    escalation_ladder_correctness: float = 5.0   # 0–10: right ADA 2024 step?
-    gap_stacking_completeness: float = 5.0       # 0–10: all closable gaps found?
-    evidence_anchor_quality: float = 5.0         # 0–10: trial evidence cited?
-    safety_exclusion_coverage: float = 5.0       # 0–10: exclusions checked?
-    reasoning: str = ""
-    outcome: str | None = None   # "closed" | "not_closed" | "pending"
-
-    @property
-    def base_overall(self) -> float:
-        return round(
-            (self.accuracy + self.completeness + self.relevance
-             + self.conciseness + self.clarity) / 5.0, 2,
-        )
-
-    @property
-    def diabetes_overall(self) -> float:
-        return round(
-            (self.inertia_detection_accuracy + self.escalation_ladder_correctness
-             + self.gap_stacking_completeness + self.evidence_anchor_quality
-             + self.safety_exclusion_coverage) / 5.0, 2,
-        )
-
-    @property
-    def overall(self) -> float:
-        return round(
-            (self.accuracy + self.completeness + self.relevance + self.conciseness
-             + self.clarity + self.inertia_detection_accuracy
-             + self.escalation_ladder_correctness + self.gap_stacking_completeness
-             + self.evidence_anchor_quality + self.safety_exclusion_coverage) / 10.0, 2,
-        )
-
-    def summary(self) -> str:
-        return (
-            f"overall={self.overall:.1f}/10  "
-            f"[base: acc={self.accuracy:.1f} cmp={self.completeness:.1f} "
-            f"rel={self.relevance:.1f} con={self.conciseness:.1f} cla={self.clarity:.1f}]  "
-            f"[diabetes: inertia={self.inertia_detection_accuracy:.1f} "
-            f"ladder={self.escalation_ladder_correctness:.1f} "
-            f"stacking={self.gap_stacking_completeness:.1f} "
-            f"evidence={self.evidence_anchor_quality:.1f} "
-            f"safety={self.safety_exclusion_coverage:.1f}]"
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -208,7 +144,7 @@ Output ONLY valid JSON:
 # Judge
 # ---------------------------------------------------------------------------
 
-class DiabetesHEDISJudge:
+class DiabetesHEDISJudge(BaseJudge):
     """
     LLM-as-judge for diabetes HEDIS recommendation quality.
 
@@ -216,75 +152,12 @@ class DiabetesHEDISJudge:
     temperature=0.0 for deterministic scoring.
     """
 
+    _eval_prompt = _DIABETES_EVAL_PROMPT
+    _compare_prompt = _COMPARE_PROMPT
+    _default_model = "llama3:8b"
+
     def __init__(self, model: str = "llama3:8b") -> None:
-        self._model = model
-        self._eval_adapter = None
-        self._compare_adapter = None
-        self._init_adapters()
-
-    def _init_adapters(self) -> None:
-        try:
-            from LLM.llm_interface import AsyncLLMAdapter
-            self._eval_adapter = AsyncLLMAdapter(
-                prompt_template=_DIABETES_EVAL_PROMPT,
-                model=self._model,
-                temperature=0.0,
-            )
-            self._compare_adapter = AsyncLLMAdapter(
-                prompt_template=_COMPARE_PROMPT,
-                model=self._model,
-                temperature=0.0,
-            )
-        except Exception as e:
-            log.error(f"DiabetesHEDISJudge: adapter init failed: {e}")
-
-    async def evaluate(
-        self,
-        recommendation: str | dict,
-        member_context: str,
-        outcome: str | None = None,
-    ) -> DiabetesJudgeScore:
-        """Score a diabetes recommendation. Returns DiabetesJudgeScore."""
-        if self._eval_adapter is None:
-            return self._neutral_score("adapter_unavailable")
-
-        rec_text = (
-            json.dumps(recommendation, indent=2)
-            if isinstance(recommendation, dict)
-            else str(recommendation)
-        )
-
-        try:
-            response = await self._eval_adapter.ainvoke({
-                "recommendation": rec_text,
-                "member_context": member_context,
-                "outcome": outcome or "pending",
-            })
-            return self._parse_score(response, recommendation)
-        except Exception as e:
-            log.error(f"DiabetesHEDISJudge.evaluate failed: {e}")
-            return self._neutral_score(str(e))
-
-    async def compare(
-        self,
-        recommendation_a: str,
-        recommendation_b: str,
-        member_context: str,
-    ) -> dict:
-        """Head-to-head comparison. Returns {winner, confidence, reasoning}."""
-        if self._compare_adapter is None:
-            return {"winner": "A", "confidence": 0.5, "reasoning": "adapter unavailable"}
-
-        try:
-            response = await self._compare_adapter.ainvoke({
-                "recommendation_a": recommendation_a,
-                "recommendation_b": recommendation_b,
-                "member_context": member_context,
-            })
-            return self._parse_json(response, {"winner": "A", "confidence": 0.5, "reasoning": ""})
-        except Exception as e:
-            log.error(f"DiabetesHEDISJudge.compare failed: {e}")
-            return {"winner": "A", "confidence": 0.5, "reasoning": str(e)}
+        super().__init__(model=model)
 
     def _parse_score(self, response: str, recommendation: Any) -> DiabetesJudgeScore:
         rec_id = str(id(recommendation))
@@ -313,16 +186,6 @@ class DiabetesHEDISJudge:
             safety_exclusion_coverage=float(data.get("safety_exclusion_coverage", 5.0)),
             reasoning=str(data.get("reasoning", "")),
         )
-
-    def _parse_json(self, text: str, default: dict) -> dict:
-        text = re.sub(r"```(?:json)?", "", text).strip().rstrip("`").strip()
-        m = re.search(r"\{.+\}", text, re.DOTALL)
-        if m:
-            try:
-                return json.loads(m.group())
-            except json.JSONDecodeError:
-                pass
-        return default
 
     def _neutral_score(self, reason: str) -> DiabetesJudgeScore:
         return DiabetesJudgeScore(
