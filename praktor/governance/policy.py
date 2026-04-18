@@ -76,6 +76,13 @@ class GovernancePolicy:
     Requires PRAKTOR_RBAC_SECRET env var. Absent secret + non-empty roles = ConfigurationError.
     """
 
+    dry_run: bool = False
+    """
+    When True: detectors run and findings are logged (stderr) but no exceptions are
+    raised and no audit sinks are written. Useful for unit tests and local development
+    without mocking the full sink/detector chain.
+    """
+
     def __post_init__(self) -> None:
         for sink in self.audit_sinks:
             if not isinstance(sink, AuditSinkType):
@@ -86,7 +93,37 @@ class GovernancePolicy:
 
 
 class GovernancePolicyViolation(Exception):
-    """Raised when a BLOCK policy action fires. Execution is halted."""
+    """
+    Raised when a BLOCK policy action fires. Execution is halted.
+
+    Attributes:
+        field_name: payload field where the entity was detected (pre-execution)
+                    or "response" (post-execution).
+        entity_type: e.g. "US_SSN", "EMAIL_ADDRESS"
+        detector_class: import path of the detector that fired
+    """
+
+    def __init__(
+        self,
+        message: str,
+        field_name: str = "",
+        entity_type: str = "",
+        detector_class: str = "",
+    ) -> None:
+        super().__init__(message)
+        self.field_name = field_name
+        self.entity_type = entity_type
+        self.detector_class = detector_class
+
+    def __str__(self) -> str:
+        base = super().__str__()
+        if self.field_name and self.entity_type:
+            return (
+                f"{base} — field='{self.field_name}', entity={self.entity_type}, "
+                f"detector={self.detector_class}. Remove PII before calling this agent "
+                f"or set action=PolicyAction.REDACT."
+            )
+        return base
 
 
 class EvaluationFailedError(Exception):

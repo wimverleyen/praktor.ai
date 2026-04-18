@@ -76,7 +76,6 @@ class TestEvaluatorLoading:
 # Agent.run() evaluation integration
 # ---------------------------------------------------------------------------
 
-@pytest.mark.xfail(reason="EvaluationPass wiring into Agent.run() deferred to Phase 3", strict=False)
 class TestAgentEvaluationHooks:
 
     @pytest.mark.asyncio

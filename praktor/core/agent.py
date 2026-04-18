@@ -1,5 +1,6 @@
 import asyncio
 import re
+import sys
 from typing import AsyncGenerator
 
 from core.agent_definition import AgentDefinition, MemoryPolicy, OutputSink
@@ -86,6 +87,17 @@ class Agent:
         # Tools — resolved from the global registry at construction time
         self._tools = {name: get_tool(name) for name in definition.tools}
 
+        # Governance — cache evaluator instances so import_module is not called per run
+        self._evaluators: list[tuple] = []  # list of (EvaluationPass, Evaluator)
+        if definition.governance_policy:
+            from governance.evaluators import load_evaluator, EvaluatorUnavailableError
+            for eval_pass in definition.governance_policy.evaluation_passes:
+                try:
+                    evaluator = load_evaluator(eval_pass.evaluator_class)
+                    self._evaluators.append((eval_pass, evaluator))
+                except Exception as exc:
+                    log.warning(f"Could not load evaluator '{eval_pass.evaluator_class}': {exc}")
+
         # Memory
         if definition.memory_policy == MemoryPolicy.NONE:
             self._memory = NullMemory()
@@ -106,7 +118,13 @@ class Agent:
 
         Routes to _react_loop() when max_steps > 1 and tools are registered,
         otherwise runs the single-pass (+ improvement passes) path.
+
+        When governance_policy is set: pre-execution detection runs before the LLM
+        call; the response is fully buffered before any chunks are yielded so that
+        post-execution detection and evaluation can fire before data leaves this
+        process boundary.
         """
+        policy = self._definition.governance_policy
         span = Span(
             agent_type=self._definition.name,
             session_id=session_id,
@@ -123,13 +141,89 @@ class Agent:
 
         all_chunks: list[str] = []
         passes = 1
+        audit_entry = None
+        audit_sinks = []
+
+        if policy:
+            from governance.audit import AuditEntry, LocalFileAuditSink, StdoutAuditSink
+            from governance.policy import AuditSinkType, GovernancePolicyViolation
+            import hashlib, time
+
+            prompt_text = str(payload)
+            audit_entry = AuditEntry(
+                agent_type=self._definition.name,
+                session_id=session_id,
+                model=self._definition.llm_model,
+                prompt_hash=AuditEntry.hash_text(prompt_text),
+                caller_identity=str(payload.get("caller_identity", "anonymous")),
+            )
+
+            if not policy.dry_run:
+                for sink_type in policy.audit_sinks:
+                    if sink_type == AuditSinkType.LOCAL_FILE:
+                        audit_sinks.append(LocalFileAuditSink())
+                    elif sink_type == AuditSinkType.STDOUT:
+                        audit_sinks.append(StdoutAuditSink())
+                    elif sink_type == AuditSinkType.KAFKA:
+                        try:
+                            from governance.audit_kafka import KafkaAuditSink
+                            audit_sinks.append(KafkaAuditSink())
+                        except Exception as exc:
+                            log.warning(f"KafkaAuditSink init failed: {exc}")
+                    elif sink_type == AuditSinkType.MINIO:
+                        log.warning("MinioAuditSink not yet implemented (Phase 4)")
 
         try:
+            # --- Pre-execution governance ---
+            if policy and policy.pre_execution:
+                from governance.detectors import load_detector
+                from governance.policy import PolicyAction, GovernancePolicyViolation
+
+                for det_cfg in policy.pre_execution:
+                    detector = load_detector(det_cfg.detector_class)
+                    for field_name, field_value in list(payload.items()):
+                        if not isinstance(field_value, str):
+                            continue
+                        results = await detector.detect(field_value, det_cfg.entities)
+                        for r in results:
+                            if r.score < det_cfg.threshold:
+                                continue
+                            action_record = {
+                                "detector_class": det_cfg.detector_class,
+                                "entity_type": r.entity_type,
+                                "action": det_cfg.action.value,
+                                "count": 1,
+                                "field": field_name,
+                            }
+                            if audit_entry is not None:
+                                audit_entry.governance_actions.append(action_record)
+
+                            if det_cfg.action == PolicyAction.BLOCK:
+                                msg = f"BLOCK: {r.entity_type} detected in field '{field_name}'"
+                                if audit_entry is not None:
+                                    audit_entry.flagged = True
+                                if policy.dry_run:
+                                    sys.stderr.write(f"[governance dry_run] {msg}\n")
+                                else:
+                                    raise GovernancePolicyViolation(
+                                        msg,
+                                        field_name=field_name,
+                                        entity_type=r.entity_type,
+                                        detector_class=det_cfg.detector_class,
+                                    )
+                            elif det_cfg.action == PolicyAction.REDACT:
+                                payload[field_name] = payload[field_name].replace(
+                                    r.text, f"[REDACTED:{r.entity_type}]"
+                                )
+                            elif det_cfg.action == PolicyAction.FLAG:
+                                if audit_entry is not None:
+                                    audit_entry.flagged = True
+
+            # --- LLM execution ---
             if self._definition.max_steps > 1 and self._tools:
-                # --- ReAct loop ---
+                # --- ReAct loop (always buffers — final answer is a single string) ---
                 async for chunk in self._react_loop(payload, span):
                     all_chunks.append(chunk)
-                    yield chunk
                 passes = len(span._trajectory)
             else:
                 # --- Single-pass ---
@@ -139,7 +233,6 @@ class Agent:
                     async for chunk in self._adapter.astream(payload, call_span=call_span):
                         current_response.append(chunk)
                         all_chunks.append(chunk)
-                        yield chunk
 
                 # --- Improvement passes ---
                 for improve_adapter, output_key in self._improvement_adapters:
@@ -150,11 +243,102 @@ class Agent:
                         async for chunk in improve_adapter.astream(payload, call_span=call_span):
                             current_response.append(chunk)
                             all_chunks.append(chunk)
-                            yield chunk
 
             final_response = "".join(all_chunks)
+
+            # --- Post-execution governance ---
+            if policy and policy.post_execution:
+                from governance.detectors import load_detector
+                from governance.policy import PolicyAction, GovernancePolicyViolation
+
+                for det_cfg in policy.post_execution:
+                    detector = load_detector(det_cfg.detector_class)
+                    results = await detector.detect(final_response, det_cfg.entities)
+                    for r in results:
+                        if r.score < det_cfg.threshold:
+                            continue
+                        action_record = {
+                            "detector_class": det_cfg.detector_class,
+                            "entity_type": r.entity_type,
+                            "action": det_cfg.action.value,
+                            "count": 1,
+                            "field": "response",
+                        }
+                        if audit_entry is not None:
+                            audit_entry.governance_actions.append(action_record)
+
+                        if det_cfg.action == PolicyAction.BLOCK:
+                            msg = f"BLOCK: {r.entity_type} detected in response"
+                            if audit_entry is not None:
+                                audit_entry.flagged = True
+                            if policy.dry_run:
+                                sys.stderr.write(f"[governance dry_run] {msg}\n")
+                            else:
+                                raise GovernancePolicyViolation(
+                                    msg,
+                                    field_name="response",
+                                    entity_type=r.entity_type,
+                                    detector_class=det_cfg.detector_class,
+                                )
+                        elif det_cfg.action == PolicyAction.REDACT:
+                            final_response = final_response.replace(
+                                r.text, f"[REDACTED:{r.entity_type}]"
+                            )
+                        elif det_cfg.action == PolicyAction.FLAG:
+                            if audit_entry is not None:
+                                audit_entry.flagged = True
+
+            # --- Evaluation passes ---
+            if policy and self._evaluators:
+                from governance.policy import PolicyAction, EvaluationFailedError
+
+                for eval_pass, evaluator in self._evaluators:
+                    try:
+                        score = await evaluator.score(str(payload), final_response)
+                    except Exception as exc:
+                        log.warning(f"Evaluator '{eval_pass.evaluator_class}' failed: {exc}. score=0.0")
+                        score = 0.0
+
+                    passed = score >= eval_pass.pass_threshold
+                    score_record = {
+                        "evaluator_class": eval_pass.evaluator_class,
+                        "metric_name": eval_pass.metric_name,
+                        "score": score,
+                        "pass": passed,
+                    }
+                    if audit_entry is not None:
+                        audit_entry.evaluation_scores.append(score_record)
+
+                    if not passed:
+                        if eval_pass.on_fail == PolicyAction.FLAG:
+                            if audit_entry is not None:
+                                audit_entry.flagged = True
+                        elif eval_pass.on_fail == PolicyAction.BLOCK:
+                            if audit_entry is not None:
+                                audit_entry.flagged = True
+                            if not (policy and policy.dry_run):
+                                raise EvaluationFailedError(
+                                    f"Evaluation failed: metric={eval_pass.metric_name} "
+                                    f"score={score:.3f} < threshold={eval_pass.pass_threshold}"
+                                )
+
+            # --- Yield buffered response ---
+            # (if no policy: chunks were collected but not yielded; yield them now)
+            # (if policy: governance has run; safe to yield)
+            if policy:
+                # Re-split final_response in case REDACT changed it
+                yield final_response
+            else:
+                for chunk in all_chunks:
+                    yield chunk
+
             token_count = len(final_response.split())
 
+            if audit_entry is not None:
+                audit_entry.response_hash = AuditEntry.hash_text(final_response)
+                audit_entry.token_count = token_count
+
+            # Memory stores the post-governance (possibly redacted) response
             await self._memory.save(
                 session_id, {"role": "assistant", "content": final_response}
             )
@@ -179,6 +363,15 @@ class Agent:
             self._monitoring_hook(span, 0, 1, error=str(e))
             log.error(f"Agent '{self._definition.name}' failed: {e}", exc_info=True)
             raise
+
+        finally:
+            # Audit entry written unconditionally — covers BLOCK and error paths
+            if audit_entry is not None and audit_sinks:
+                for sink in audit_sinks:
+                    try:
+                        await sink.write(audit_entry)
+                    except Exception as exc:
+                        log.error(f"Audit sink write failed: {exc}")
 
     async def _react_loop(
         self, payload: dict, span: Span

@@ -764,3 +764,33 @@ python -m praktor prompt activate <agent> <version_id>
 python -m praktor prompt eval <agent> <version_id> -q "..." -r "..."
 python -m praktor prompt optimize <agent> -x examples.json --goal "..."
 ```
+
+---
+
+## Governance quickstart
+
+```python
+from core.agent_definition import AgentDefinition
+from governance.policy import GovernancePolicy, DetectorConfig, PolicyAction, AuditSinkType
+
+policy = GovernancePolicy(
+    pre_execution=[
+        DetectorConfig(
+            detector_class="governance.detectors.RegexDetector",
+            entities=["US_SSN", "EMAIL_ADDRESS"],
+            action=PolicyAction.REDACT,
+        )
+    ],
+    audit_sinks=[AuditSinkType.STDOUT],
+)
+
+defn = AgentDefinition(
+    name="my_agent",
+    prompt_template="Answer: {text}",
+    governance_policy=policy,
+)
+```
+
+PII/PHI in any payload field is redacted before the LLM sees it. Every run produces
+an audit entry. Set `action=PolicyAction.BLOCK` to halt execution instead of redacting.
+Set `dry_run=True` to log findings without raising or writing to sinks.

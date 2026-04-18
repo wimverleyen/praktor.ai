@@ -380,7 +380,6 @@ class _GovInput(BaseModel):
     session_id: str = ""
 
 
-@pytest.mark.xfail(reason="Governance wiring into Agent.run() deferred to Phase 3", strict=False)
 class TestAgentGovernanceHooks:
 
     @pytest.mark.asyncio
@@ -613,7 +612,6 @@ class TestAgentGovernanceHooks:
             assert "".join(chunks) == "result"
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(reason="Governance wiring into Agent.run() deferred to Phase 3", strict=False)
     async def test_audit_entry_written_to_local_file(self, tmp_path):
         """Successful run with LOCAL_FILE sink produces a valid JSONL audit entry."""
         from core.agent import Agent
@@ -655,3 +653,138 @@ class TestAgentGovernanceHooks:
         assert data["session_id"] == "s1"
         assert data["prompt_hash"]  # non-empty SHA-256
         assert data["response_hash"]
+
+    @pytest.mark.asyncio
+    async def test_audit_entry_written_on_pre_execution_block(self, tmp_path):
+        """BLOCK raises GovernancePolicyViolation AND the audit entry is written."""
+        from core.agent import Agent
+        from core.agent_definition import AgentDefinition
+        from governance.policy import GovernancePolicy, DetectorConfig, PolicyAction
+
+        log_path = str(tmp_path / "audit.jsonl")
+
+        policy = GovernancePolicy(
+            pre_execution=[
+                DetectorConfig(
+                    detector_class="governance.detectors.RegexDetector",
+                    entities=["US_SSN"],
+                    action=PolicyAction.BLOCK,
+                )
+            ],
+            audit_sinks=[AuditSinkType.LOCAL_FILE],
+        )
+        defn = AgentDefinition(
+            name="gov_test",
+            prompt_template="Process: {text}",
+            input_schema=_GovInput,
+            governance_policy=policy,
+        )
+        agent = Agent(defn)
+
+        with patch(
+            "governance.audit.LocalFileAuditSink",
+            return_value=LocalFileAuditSink(log_path=log_path),
+        ):
+            with pytest.raises(GovernancePolicyViolation, match="BLOCK"):
+                async for _ in agent.run(
+                    {"agent_type": "gov_test", "text": "SSN 123-45-6789", "session_id": ""},
+                    session_id="block-session",
+                ):
+                    pass
+
+        assert Path(log_path).exists(), "Audit entry should be written even when BLOCK fires"
+        lines = Path(log_path).read_text().strip().split("\n")
+        assert len(lines) == 1
+        data = json.loads(lines[0])
+        assert data["session_id"] == "block-session"
+        assert data["flagged"] is True
+        assert any(a["action"] == "block" for a in data["governance_actions"])
+
+    @pytest.mark.asyncio
+    async def test_memory_saves_redacted_response(self):
+        """Post-execution REDACT: memory receives the redacted text, not the original PHI."""
+        from core.agent import Agent
+        from core.agent_definition import AgentDefinition
+        from governance.policy import GovernancePolicy, DetectorConfig, PolicyAction
+        from memory.buffer import InMemoryBuffer
+
+        policy = GovernancePolicy(
+            post_execution=[
+                DetectorConfig(
+                    detector_class="governance.detectors.RegexDetector",
+                    entities=["US_SSN"],
+                    action=PolicyAction.REDACT,
+                )
+            ],
+            audit_sinks=[AuditSinkType.STDOUT],
+        )
+        defn = AgentDefinition(
+            name="gov_test",
+            prompt_template="Process: {text}",
+            input_schema=_GovInput,
+            governance_policy=policy,
+        )
+        agent = Agent(defn)
+        memory = InMemoryBuffer()
+        agent._memory = memory
+
+        async def _leak_ssn(payload, call_span=None):
+            yield "The patient SSN is 123-45-6789"
+
+        with patch.object(agent._adapter, "astream", side_effect=_leak_ssn):
+            with patch("governance.audit.StdoutAuditSink", return_value=MagicMock(write=AsyncMock())):
+                chunks = []
+                async for chunk in agent.run(
+                    {"agent_type": "gov_test", "text": "clean", "session_id": ""},
+                    session_id="redact-session",
+                ):
+                    chunks.append(chunk)
+
+        stored = await memory.load("redact-session")
+        assert stored, "Memory should have an entry"
+        stored_content = stored[-1]["content"]
+        assert "123-45-6789" not in stored_content, "Original SSN must not be stored"
+        assert "[REDACTED:US_SSN]" in stored_content
+
+    @pytest.mark.asyncio
+    async def test_governance_runs_in_react_path(self):
+        """Post-execution BLOCK fires on ReAct Final Answer containing PHI."""
+        from core.agent import Agent
+        from core.agent_definition import AgentDefinition
+        from governance.policy import GovernancePolicy, DetectorConfig, PolicyAction
+
+        policy = GovernancePolicy(
+            post_execution=[
+                DetectorConfig(
+                    detector_class="governance.detectors.RegexDetector",
+                    entities=["US_SSN"],
+                    action=PolicyAction.BLOCK,
+                )
+            ],
+            audit_sinks=[AuditSinkType.STDOUT],
+        )
+        defn = AgentDefinition(
+            name="gov_test",
+            prompt_template="Answer: {text}",
+            input_schema=_GovInput,
+            max_steps=3,
+            tools=["web_search"],
+            governance_policy=policy,
+        )
+
+        mock_tool = AsyncMock(return_value=MagicMock(ok=True, content="result"))
+        with patch("core.agent.get_tool", return_value=mock_tool):
+            agent = Agent(defn)
+
+        # Patch _react_loop to yield a Final Answer containing an SSN
+        async def _fake_react_loop(payload, span):
+            yield "The patient SSN is 987-65-4321"
+
+        with patch.object(agent, "_react_loop", side_effect=_fake_react_loop):
+            with patch("governance.audit.StdoutAuditSink", return_value=MagicMock(write=AsyncMock())):
+                with pytest.raises(GovernancePolicyViolation, match="BLOCK"):
+                    async for _ in agent.run(
+                        {"agent_type": "gov_test", "text": "what is the SSN?", "session_id": ""},
+                        session_id="react-session",
+                    ):
+                        pass
