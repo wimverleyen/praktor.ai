@@ -23,6 +23,15 @@ jobs:
       - name: Install Ollama
         run: curl -fsSL https://ollama.com/install.sh | sh
 
+      - name: Start Ollama daemon
+        run: |
+          ollama serve &
+          # Wait until the server is accepting connections (up to 30s)
+          for i in $(seq 1 30); do
+            ollama list 2>/dev/null && break
+            sleep 1
+          done
+
       - name: Pull model
         run: ollama pull qwen2.5
 
