@@ -87,6 +87,17 @@ class Agent:
         # Tools — resolved from the global registry at construction time
         self._tools = {name: get_tool(name) for name in definition.tools}
 
+        # AIGov — LedgerStore opened once per Agent when obligation_bundle is set
+        self._ledger_store = None
+        if definition.obligation_bundle:
+            try:
+                import os
+                from praktor.aigov.ledger.store import LedgerStore
+                db_path = os.environ.get("AIGOV_LEDGER_PATH") or None
+                self._ledger_store = LedgerStore(db_path=db_path)
+            except Exception as exc:
+                log.warning(f"AIGov LedgerStore init failed — obligation checks disabled: {exc}")
+
         # Governance — cache evaluator instances so import_module is not called per run
         self._evaluators: list[tuple] = []  # list of (EvaluationPass, Evaluator)
         if definition.governance_policy:
@@ -336,6 +347,10 @@ class Agent:
                                     f"score={score:.3f} < threshold={eval_pass.pass_threshold}"
                                 )
 
+            # --- AIGov G-RUN obligation checks ---
+            if self._definition.obligation_bundle and self._ledger_store:
+                await self._run_grun_checks(str(payload), final_response)
+
             # --- Yield buffered response ---
             # (if no policy: chunks were collected but not yielded; yield them now)
             # (if policy: governance has run; safe to yield)
@@ -494,6 +509,44 @@ class Agent:
             f"without a Final Answer"
         )
         yield llm_response
+
+    async def _run_grun_checks(self, payload_str: str, response: str) -> None:
+        """
+        Run G-RUN obligation checks for every obligation in the bundle.
+
+        Each obligation's check_run() is called concurrently. Results are stamped
+        with agent context then written to the ledger in one batch. All failures
+        are caught and logged — obligation checks must never crash the agent.
+        """
+        import asyncio
+        import dataclasses
+
+        bundle = self._definition.obligation_bundle
+
+        async def _check_one(ob):
+            try:
+                ev = await ob.check_run(payload_str, response)
+                return dataclasses.replace(
+                    ev,
+                    agent_id=self._definition.name,
+                    bundle_id=bundle.bundle_id,
+                    agent_pattern=self._definition.agent_pattern,
+                )
+            except Exception as exc:
+                log.warning(f"AIGov {ob.id}.check_run() raised: {exc}")
+                return None
+
+        results = await asyncio.gather(
+            *(_check_one(ob) for ob in bundle),
+            return_exceptions=False,
+        )
+        events = [ev for ev in results if ev is not None]
+
+        if events:
+            try:
+                await self._ledger_store.write_events(events)
+            except Exception as exc:
+                log.warning(f"AIGov ledger write failed: {exc}")
 
     def _monitoring_hook(
         self, span: Span, token_count: int, passes: int, error: str | None = None
