@@ -45,7 +45,7 @@ PRAKTOR_AUDIT_LOG = os.getenv('PRAKTOR_AUDIT_LOG', 'praktor_audit.jsonl')
 PRAKTOR_AUDIT_MAX_BYTES = int(os.getenv('PRAKTOR_AUDIT_MAX_BYTES', str(100 * 1024 * 1024)))
 
 # --- Logging ---
-_LOG_FILE = 'praktor.ai.log'
+_LOG_FILE = os.getenv('PRAKTOR_LOG_FILE', 'praktor.ai.log')
 _MAX_BYTES = 10 * 1024 * 1024  # 10 MB
 _BACKUP_COUNT = 5
 
