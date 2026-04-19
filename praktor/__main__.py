@@ -18,10 +18,18 @@ import json
 def cmd_receive(args):
     """Start the async RabbitMQ consumer."""
     import asyncio
+    import os
     import praktor.agents  # noqa: F401 — triggers auto-registration of all agents
     from praktor.core.observability import init_tracer_provider
     from praktor.core.router import get_global_router
     from praktor.transport.consumer import run_consumer
+
+    # Start Prometheus scrape endpoint in the same process so it shares
+    # the in-memory registry that agents write to.
+    prom_port = int(os.getenv("PRAKTOR_PROMETHEUS_PORT", "0"))
+    if prom_port:
+        from praktor.monitoring import configure
+        configure(prometheus_port=prom_port)
 
     init_tracer_provider()
     router = get_global_router()
