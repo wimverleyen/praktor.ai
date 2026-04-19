@@ -1,0 +1,43 @@
+name: AIGov Obligation Check
+
+# CI gate: verifies that all AIGov obligations (O1-O11) pass their
+# G-BUILD / G-TEST / G-RUN unit tests and that the standard bundle
+# build-check completes without FAIL events.
+#
+# This runs in addition to the main test.yml suite so obligation failures
+# are surfaced as a named check on every PR rather than buried in test output.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  aigov:
+    name: AIGov G-BUILD / G-TEST / G-RUN
+    runs-on: ubuntu-latest
+    env:
+      OTEL_SDK_DISABLED: "true"
+      AIGOV_LEDGER_PATH: /tmp/aigov-ci-check.duckdb
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Run AIGov obligation tests
+        working-directory: praktor
+        run: python -m pytest ../tests/aigov/ -v --tb=short
+
+      - name: G-BUILD smoke check (standard bundle)
+        run: python -m praktor aigov build-check --bundle standard
+
+      - name: Scoreboard (no-fail — ledger is empty in CI)
+        run: python -m praktor aigov scoreboard --no-fail-on-empty

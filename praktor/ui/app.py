@@ -502,6 +502,146 @@ def tab_documents():
 
 
 # ---------------------------------------------------------------------------
+# Tab 4: AIGov Scoreboard
+# ---------------------------------------------------------------------------
+
+_AIGOV_STATUS_ICON = {"GREEN": "🟢", "AMBER": "🟡", "RED": "🔴", "GREY": "⬜"}
+_AIGOV_STATUS_COLOR = {
+    "GREEN": "#d4edda",
+    "AMBER": "#fff3cd",
+    "RED": "#f8d7da",
+    "GREY": "#e2e3e5",
+}
+
+
+@st.cache_resource
+def _get_ledger_store():
+    """Return a LedgerStore; cached across reruns."""
+    import os
+    from praktor.aigov.ledger.store import LedgerStore
+    db_path = os.getenv("AIGOV_LEDGER_PATH") or None
+    return LedgerStore(db_path=db_path)
+
+
+def tab_aigov():
+    st.subheader("AIGov Scoreboard")
+    st.caption(
+        "Live obligation status per agent × obligation × enforcement point. "
+        "Reads from the append-only DuckDB ledger."
+    )
+
+    try:
+        store = _get_ledger_store()
+    except Exception as e:
+        st.error(f"Could not open AIGov ledger: {e}")
+        return
+
+    from praktor.aigov.ledger.scoreboard import scoreboard_current, status_summary
+
+    col_f1, col_f2, col_f3 = st.columns([2, 2, 1])
+    with col_f1:
+        agent_filter = st.text_input("Filter by agent ID", value="", placeholder="all agents")
+    with col_f2:
+        point_options = ["All points", "G-BUILD", "G-TEST", "G-RUN"]
+        point_filter = st.selectbox("Enforcement point", point_options)
+    with col_f3:
+        if st.button("Refresh", use_container_width=True):
+            st.cache_resource.clear()
+            st.rerun()
+
+    rows = scoreboard_current(
+        store,
+        agent_id=agent_filter.strip() or None,
+    )
+
+    if point_filter != "All points":
+        rows = [r for r in rows if r.enforcement_point == point_filter]
+
+    if not rows:
+        st.info(
+            "No obligation events found. Run agents with an `obligation_bundle` set, "
+            "or use `python -m praktor aigov build-check` to populate the ledger."
+        )
+        return
+
+    # ── summary metrics ──────────────────────────────────────────────────────
+    overall = status_summary(rows)
+    green_n = sum(1 for r in rows if r.status == "GREEN")
+    amber_n = sum(1 for r in rows if r.status == "AMBER")
+    red_n   = sum(1 for r in rows if r.status == "RED")
+
+    icon = _AIGOV_STATUS_ICON.get(overall, "?")
+    color = _AIGOV_STATUS_COLOR.get(overall, "#e2e3e5")
+    st.markdown(
+        f'<div style="background:{color};padding:10px 16px;border-radius:6px;margin-bottom:12px">'
+        f'<b>Overall: {icon} {overall}</b> &nbsp;·&nbsp; '
+        f'🟢 {green_n} &nbsp; 🟡 {amber_n} &nbsp; 🔴 {red_n}'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+    st.divider()
+
+    # ── scoreboard table ──────────────────────────────────────────────────────
+    # Group by agent
+    agents: dict[str, list] = {}
+    for r in rows:
+        agents.setdefault(r.agent_id, []).append(r)
+
+    for agent_id, agent_rows in sorted(agents.items()):
+        agent_status = status_summary(agent_rows)
+        agent_icon = _AIGOV_STATUS_ICON.get(agent_status, "?")
+        with st.expander(f"{agent_icon} **{agent_id}** — {agent_status}", expanded=(agent_status == "RED")):
+            for r in sorted(agent_rows, key=lambda x: (x.obligation_id, x.enforcement_point)):
+                row_icon = _AIGOV_STATUS_ICON.get(r.status, "?")
+                ts = r.last_event_ts[:19].replace("T", " ") if r.last_event_ts else "—"
+                note = f"  ← *{r.deferred_reason}*" if r.deferred_reason else ""
+                st.markdown(
+                    f"{row_icon} &nbsp; `{r.obligation_id}` &nbsp; "
+                    f"**{r.enforcement_point}** &nbsp; {r.status} &nbsp; "
+                    f"<small style='color:#888'>{ts}{note}</small>",
+                    unsafe_allow_html=True,
+                )
+
+    st.divider()
+
+    # ── attestation section ───────────────────────────────────────────────────
+    st.markdown("**Create Attestation**")
+    st.caption("Generates a signed point-in-time snapshot of the current scoreboard.")
+
+    with st.form("attest_form"):
+        col_a, col_b, col_c = st.columns([2, 2, 1])
+        with col_a:
+            att_agent = st.text_input("Agent ID", value=agent_filter.strip() or "all")
+        with col_b:
+            att_bundle = st.text_input("Bundle ID", value="custom-v1")
+        with col_c:
+            att_days = st.number_input("Validity (days)", min_value=1, max_value=365, value=30)
+        att_notes = st.text_input("Notes (optional)", value="")
+        submitted = st.form_submit_button("Generate Attestation", use_container_width=True)
+
+    if submitted:
+        from praktor.aigov.attestation import create_attestation
+        att = create_attestation(
+            agent_id=att_agent,
+            bundle_id=att_bundle,
+            rows=rows,
+            validity_days=int(att_days),
+            notes=att_notes,
+        )
+        held = att.all_obligations_held()
+        held_icon = "🟢" if held else "🔴"
+        st.success(
+            f"**Attestation `{att.attestation_id[:12]}…`** · "
+            f"{held_icon} Held={held} · "
+            f"Valid until `{att.valid_until[:10]}`"
+        )
+        with st.expander("Full attestation record"):
+            import dataclasses, json as _json
+            st.json(_json.dumps(dataclasses.asdict(att), indent=2))
+
+
+# ---------------------------------------------------------------------------
 # Sidebar — live summary
 # ---------------------------------------------------------------------------
 
@@ -546,7 +686,7 @@ def main():
     st.title("⚡ praktor.ai")
     st.caption("General-purpose agentic framework · ReAct · OTel · Prometheus · Grafana")
 
-    tab1, tab2, tab3 = st.tabs(["📡 Span Tracer", "🤖 Skills", "📄 Documents"])
+    tab1, tab2, tab3, tab4 = st.tabs(["📡 Span Tracer", "🤖 Skills", "📄 Documents", "🛡️ AIGov"])
 
     with tab1:
         tab_tracer()
@@ -556,6 +696,9 @@ def main():
 
     with tab3:
         tab_documents()
+
+    with tab4:
+        tab_aigov()
 
 
 if __name__ == "__main__":

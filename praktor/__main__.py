@@ -295,6 +295,169 @@ def cmd_prompt(args):
         asyncio.run(_run())
 
 
+def cmd_aigov(args):
+    """
+    AIGov obligation commands.
+
+    Usage:
+        python -m praktor aigov scoreboard [--agent A] [--tenant T] [--format table|json]
+        python -m praktor aigov attest     [--agent A] [--bundle B] [--validity-days 30]
+        python -m praktor aigov build-check [--bundle minimal|standard|healthcare|external]
+    """
+    import asyncio
+    import os
+    from praktor.aigov.ledger.store import LedgerStore
+
+    subcmd = args.aigov_cmd
+
+    _STATUS_ICON = {"GREEN": "🟢", "AMBER": "🟡", "RED": "🔴", "GREY": "⬜"}
+
+    if subcmd == "scoreboard":
+        from praktor.aigov.ledger.scoreboard import scoreboard_current, status_summary
+
+        db_path = os.getenv("AIGOV_LEDGER_PATH") or None
+        store = LedgerStore(db_path=db_path)
+        rows = scoreboard_current(
+            store,
+            agent_id=getattr(args, "agent", None) or None,
+            tenant_id=getattr(args, "tenant", None) or None,
+        )
+
+        fmt = getattr(args, "format", "table")
+        no_fail = getattr(args, "no_fail_on_empty", False)
+
+        if not rows:
+            if no_fail:
+                print("Scoreboard: no events found (ledger empty).")
+                return
+            print("Scoreboard: no events found. Run obligation checks first.", file=sys.stderr)
+            sys.exit(0)
+
+        if fmt == "json":
+            import dataclasses
+            print(json.dumps([dataclasses.asdict(r) for r in rows], indent=2))
+        else:
+            overall = status_summary(rows)
+            icon = _STATUS_ICON.get(overall, "?")
+            print(f"\nAIGov Scoreboard — overall {icon} {overall}")
+            print("─" * 80)
+            print(f"  {'Agent':<22} {'Obligation':<8} {'Point':<10} {'Status':<8}  Last event")
+            print("  " + "─" * 76)
+            for r in rows:
+                icon_s = _STATUS_ICON.get(r.status, "?")
+                note = f"  ← {r.deferred_reason}" if r.deferred_reason else ""
+                ts = r.last_event_ts[:19].replace("T", " ") if r.last_event_ts else ""
+                print(
+                    f"  {r.agent_id:<22} {r.obligation_id:<8} {r.enforcement_point:<10}"
+                    f" {icon_s} {r.status:<6}  {ts}{note}"
+                )
+            print()
+
+        if status_summary(rows) == "RED":
+            sys.exit(1)
+
+    elif subcmd == "attest":
+        from praktor.aigov.ledger.scoreboard import scoreboard_current
+        from praktor.aigov.attestation import create_attestation
+
+        db_path = os.getenv("AIGOV_LEDGER_PATH") or None
+        store = LedgerStore(db_path=db_path)
+        agent_id = getattr(args, "agent", None) or "unknown"
+        bundle_id = getattr(args, "bundle", None) or "custom"
+        validity_days = getattr(args, "validity_days", 30)
+        notes = getattr(args, "notes", "") or ""
+
+        rows = scoreboard_current(store, agent_id=agent_id if agent_id != "unknown" else None)
+        att = create_attestation(
+            agent_id=agent_id,
+            bundle_id=bundle_id,
+            rows=rows,
+            validity_days=validity_days,
+            notes=notes,
+        )
+
+        print(f"\nAttestation {att.attestation_id}")
+        print(f"  Agent:       {att.agent_id}")
+        print(f"  Bundle:      {att.bundle_id}")
+        print(f"  Created:     {att.created_at}")
+        print(f"  Valid until: {att.valid_until}")
+        print(f"  Obligations: {len(att.obligation_statuses)} rows")
+        held = att.all_obligations_held()
+        icon = "🟢" if held else "🔴"
+        print(f"  Held:        {icon} {'YES' if held else 'NO'}")
+        print(f"  Signature:   {att.signature_hex[:16]}… (sha256-content-hash)")
+        if notes:
+            print(f"  Notes:       {notes}")
+        print()
+        if not held:
+            sys.exit(1)
+
+    elif subcmd == "build-check":
+        from praktor.aigov.bundle import (
+            minimal_bundle, standard_bundle, healthcare_bundle, external_bundle,
+        )
+        from praktor.aigov.manifests import DataFlowManifest
+        from datetime import datetime, timezone
+
+        bundle_name = getattr(args, "bundle", "standard") or "standard"
+        _bundle_map = {
+            "minimal": minimal_bundle,
+            "standard": standard_bundle,
+            "healthcare": healthcare_bundle,
+            "external": external_bundle,
+        }
+        factory = _bundle_map.get(bundle_name, standard_bundle)
+        bundle = factory()
+
+        # Default manifest for CI smoke check — not real data, just structural lint
+        manifest_json = getattr(args, "manifest", None)
+        if manifest_json:
+            try:
+                d = json.loads(manifest_json)
+                from datetime import datetime, timezone
+                if "signed_at" in d and isinstance(d["signed_at"], str):
+                    d["signed_at"] = datetime.fromisoformat(d["signed_at"])
+                manifest = DataFlowManifest(**d)
+            except Exception as e:
+                print(f"Error: invalid --manifest JSON: {e}", file=sys.stderr)
+                sys.exit(1)
+        else:
+            manifest = DataFlowManifest(
+                source_systems=["ci-default"],
+                allowed_egress_destinations=["audit_log"],
+                phi_fields=["sample_field"],
+                signed_at=datetime.now(timezone.utc),
+                deployer="ci-bot",
+            )
+
+        print(f"\nAIGov G-BUILD check — bundle '{bundle.bundle_id}'")
+        print("─" * 60)
+
+        any_fail = False
+
+        async def _run_checks():
+            nonlocal any_fail
+            for ob in bundle:
+                ev = await ob.check_build(manifest)
+                icon = _STATUS_ICON.get(
+                    {"PASS": "GREEN", "FAIL": "RED", "WAIVED": "GREEN", "NA": "AMBER"}.get(
+                        ev.predicate_result.value, "GREY"
+                    ), "?"
+                )
+                note = f"  ({ev.deferred_reason})" if ev.deferred_reason else ""
+                print(f"  {icon} {ob.id:<6} {ob.name:<35} {ev.predicate_result.value}{note}")
+                if ev.predicate_result.value == "FAIL":
+                    any_fail = True
+
+        asyncio.run(_run_checks())
+        print()
+        if any_fail:
+            print("❌ Build check FAILED — one or more obligations did not pass.", file=sys.stderr)
+            sys.exit(1)
+        else:
+            print("✅ Build check passed (FAIL=0; NA obligations are deferred, not failures).")
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="praktor",
@@ -382,6 +545,34 @@ def main():
     po.add_argument("--goal", "-g", default="", help="Optimization goal description")
     po.add_argument("--model", "-m", default="qwen2.5", help="LLM model for optimization")
 
+    # --- aigov ---
+    aig = sub.add_parser("aigov", help="AIGov obligation checks, scoreboard, and attestation")
+    aig_sub = aig.add_subparsers(dest="aigov_cmd", required=True)
+
+    # aigov scoreboard
+    asb = aig_sub.add_parser("scoreboard", help="Show current obligation status from the ledger")
+    asb.add_argument("--agent", "-a", help="Filter by agent ID")
+    asb.add_argument("--tenant", "-t", help="Filter by tenant ID")
+    asb.add_argument("--format", "-f", choices=["table", "json"], default="table")
+    asb.add_argument("--no-fail-on-empty", action="store_true", dest="no_fail_on_empty",
+                     help="Exit 0 (not error) when the ledger has no events yet")
+
+    # aigov attest
+    aat = aig_sub.add_parser("attest", help="Create a signed attestation from the current scoreboard")
+    aat.add_argument("--agent", "-a", default="unknown", help="Agent ID to attest")
+    aat.add_argument("--bundle", "-b", default="custom", help="Bundle ID label")
+    aat.add_argument("--validity-days", type=int, default=30, dest="validity_days",
+                     help="Days until attestation expires (default: 30)")
+    aat.add_argument("--notes", "-n", default="", help="Free-text notes")
+
+    # aigov build-check
+    abc = aig_sub.add_parser("build-check", help="Run G-BUILD obligation checks (CI gate)")
+    abc.add_argument("--bundle", "-b", default="standard",
+                     choices=["minimal", "standard", "healthcare", "external"],
+                     help="Pre-built bundle to check (default: standard)")
+    abc.add_argument("--manifest", "-m", default="",
+                     help="DataFlowManifest as JSON string (omit for CI default)")
+
     args = parser.parse_args()
 
     dispatch = {
@@ -392,6 +583,7 @@ def main():
         "monitor":          cmd_monitor,
         "demo-governance":  cmd_demo_governance,
         "prompt":           cmd_prompt,
+        "aigov":            cmd_aigov,
     }
     dispatch[args.command](args)
 
