@@ -417,6 +417,27 @@ print(cmp["winner"], cmp["reasoning"])
 
 Scores are recorded back to `PromptRegistry.record_eval()` and the monitoring SQLite store.
 
+### Continuous calibration loop (clinical agents)
+
+For the HEDIS and diabetes agents, judges can be automatically calibrated against a golden dataset and kept in sync with production quality:
+
+```bash
+# 1. Calibrate judges against 20 built-in golden samples
+python -m praktor judge-optimize
+
+# 2. Run offline eval to verify the calibrated judges
+python -m praktor eval --dry-run
+
+# 3. Run 10 synthetic demo cases and AI-judge every output
+python -m praktor demo
+
+# 4. After a care manager approves a run in the HITL UI, promote it to the golden dataset
+python -m praktor promote <session_id>
+# → every 3 promotions, recalibration runs automatically if the new judge is better
+```
+
+Calibrated prompts are stored in `PromptRegistry` (keyed `judge_hedis` / `judge_diabetes_hedis`) and loaded automatically by `create_calibrated_judge()` on every eval and demo run. Custom promoted samples are stored at `~/.praktor/golden_custom.jsonl`.
+
 ---
 
 ## Automated prompt optimization
@@ -700,7 +721,7 @@ Switch model per-agent via `AgentDefinition.llm_model`, or globally via `PRAKTOR
 ```
 praktor.ai/
 ├── praktor/
-│   ├── __main__.py              # CLI: receive | publish | list | monitor | prompt
+│   ├── __main__.py              # CLI: receive | publish | list | monitor | prompt | eval | demo | judge-optimize | promote
 │   ├── settings.py              # Config, rotating logs, env vars
 │   │
 │   ├── core/                    # Framework abstractions
@@ -748,10 +769,15 @@ praktor.ai/
 │       │   ├── ehr_ingest.py    # Labs + vitals → clinical store
 │       │   └── notes_ingest.py  # Clinical notes → member FAISS brain (PHI gate)
 │       └── evaluation/
-│           ├── base_judge.py    # BaseJudge ABC — shared evaluate(), compare(), _parse_json() plumbing
-│           ├── hedis_judge.py   # HEDISJudge — LLM-as-judge for clinical reasoning quality
+│           ├── base_judge.py       # BaseJudge ABC — shared evaluate(), compare(), _parse_json() plumbing
+│           ├── hedis_judge.py      # HEDISJudge — LLM-as-judge for clinical reasoning quality
 │           ├── diabetes_hedis_judge.py  # DiabetesHEDISJudge — 10-criterion diabetes-specific judge
-│           └── closure_tracker.py  # Outcome tracking + get_review_queue() → PromptOptimizer feedback
+│           ├── closure_tracker.py  # Outcome tracking + get_review_queue() → PromptOptimizer feedback
+│           ├── judge_optimizer.py  # calibrate_judges(), create_calibrated_judge(), ensure_judges_calibrated()
+│           ├── golden_dataset.py   # GoldenSample store, promote_to_golden(), load/seed helpers
+│           ├── offline_eval.py     # run_offline_eval() — batch judge against golden samples
+│           ├── production_eval.py  # judge_run(), ProductionEvalScheduler, run_demo()
+│           └── demo_cases.py       # 10 synthetic HEDIS + diabetes demo cases
 │
 ├── scripts/
 │   ├── demo_react.py            # Interactive ReAct loop demo (colour output)
@@ -771,7 +797,8 @@ praktor.ai/
 │   ├── test_hedis_agent.py      # 17 tests: parser, definition, escalation guardrails
 │   ├── test_base_judge.py       # 20 tests: BaseJudge ABC, evaluate(), compare(), error paths
 │   ├── test_hedis_judge.py      # 8 tests: HEDISJudge scoring + inheritance
-│   └── test_diabetes_judge.py   # 12 tests: DiabetesHEDISJudge 10-criterion scoring
+│   ├── test_diabetes_judge.py   # 12 tests: DiabetesHEDISJudge 10-criterion scoring
+│   └── test_judge_calibration.py  # 28 tests: calibration loop, promotion, golden dataset, CLI
 │
 ├── praktor/ui/
 │   ├── app.py                   # Streamlit demo UI (3 tabs: Span Tracer, Skills, Docs)
@@ -812,7 +839,7 @@ The UI reads from `~/.praktor/monitoring.db` — start the consumer and publish 
 
 ```bash
 uv run pytest tests/ -q
-# 267 tests — governance, evaluation, ReAct, monitoring, clinical, judge (all mocked)
+# 295 tests — governance, evaluation, ReAct, monitoring, clinical, judge, calibration (all mocked)
 
 # PHI gate tests — IRON RULE: must pass before FAISS write path ships
 PYTHONPATH=praktor pytest tests/test_clinical_privacy.py -v
@@ -975,4 +1002,16 @@ python -m praktor prompt diff <agent> v1 v2  # unified diff
 python -m praktor prompt activate <agent> <version_id>
 python -m praktor prompt eval <agent> <version_id> -q "..." -r "..."
 python -m praktor prompt optimize <agent> -x examples.json --goal "..."
+
+# Evaluation & judge calibration
+python -m praktor eval                       # offline eval: all 20 golden samples
+python -m praktor eval --agent hedis_gap     # offline eval: HEDIS samples only
+python -m praktor eval --production          # judge recent production runs (last 24h)
+python -m praktor eval --dry-run             # score reference outputs only (fast, no LLM)
+python -m praktor demo                       # seed + run 10 synthetic cases + AI-judge
+python -m praktor demo --seed-only           # seed demo members without running agents
+python -m praktor judge-optimize             # calibrate both judges against golden dataset
+python -m praktor judge-optimize --agent hedis_gap  # calibrate one judge
+python -m praktor promote <session_id>       # promote HITL-approved run → golden dataset
+python -m praktor promote <session_id> --skip-recalibrate  # promote without recalibration
 ```

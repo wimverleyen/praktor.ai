@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.4.1.0] - 2026-04-19 — Continuous Judge Calibration Loop
+
+### Added
+
+- **`judge-optimize` CLI** — `python -m praktor judge-optimize` calibrates AI judges against the golden dataset and saves the winning prompt to `PromptRegistry`. Run with `--agent hedis_gap` or `--agent diabetes_hedis` to target one judge.
+- **`eval` CLI** — `python -m praktor eval` runs offline evaluation across all 20 golden samples. `--production` judges recent production runs. `--dry-run` scores reference outputs only (no LLM calls). `--agent` filters to one agent type.
+- **`demo` CLI** — `python -m praktor demo` seeds 10 synthetic cases, runs both HEDIS and diabetes agents with concurrency control, AI-judges every output, and populates the HITL review queue.
+- **`promote` CLI** — `python -m praktor promote <session_id>` promotes a HITL-approved production run to the custom golden dataset (`~/.praktor/golden_custom.jsonl`). Triggers recalibration automatically every 3 promotions if the new judge outperforms the current one by ≥ 0.5 points.
+- **`create_calibrated_judge()`** — factory in `judge_optimizer.py` that constructs a judge and patches `_eval_adapter` from the active `PromptRegistry` version. Falls back gracefully to uncalibrated defaults if the registry is unavailable.
+- **`ensure_judges_calibrated()`** — async helper that checks registry before calibrating; called automatically at the start of `run_offline_eval()` and `run_demo()`.
+- **Custom golden dataset** — `load_golden_samples()` now reads `~/.praktor/golden_custom.jsonl` alongside the built-in 20 samples. Promoted samples (`measurement_year=0`) are excluded from judge scoring but included in few-shot context.
+- **`ProductionEvalScheduler` cache invalidation** — `invalidate_judge_cache()` clears stale judge instances at each scheduler tick so `judge-optimize` recalibrations take effect without restarting the process.
+- **28 new tests** in `tests/test_judge_calibration.py` — covers all factory, calibration, promotion, and CLI paths.
+
+### Fixed
+
+- Calibrated prompts saved by `judge-optimize` were silently ignored: `_get_judge()` in `production_eval.py` and `agent_map` in `offline_eval.py` both constructed bare judge instances from hardcoded class attributes. Both now use `create_calibrated_judge()` and read from `PromptRegistry`.
+- Promoted production samples (`clinical_scenario="production:<sid>"`) were previously passed to `_score_reference_outputs()`, producing garbage scoring context. They are now filtered out before scoring but still contribute to few-shot blocks.
+- `seed_golden_members()` now skips promoted samples (`measurement_year=0`) to avoid upserting empty `member_data={}` records into the clinical store.
+
 ## [0.4.0] - 2026-04-18 — Governance DX: block_pii(), RegexEntities, py.typed
 
 ### Added
