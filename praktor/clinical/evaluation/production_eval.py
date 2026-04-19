@@ -26,18 +26,27 @@ from praktor.settings import create_log, new_request_id
 
 log = create_log()
 
-# Judges are created once at module level to avoid repeated adapter init
+# Judges are created once per process start (or after invalidate_judge_cache()).
+# Process-scoped: recalibration via judge-optimize takes effect on next restart
+# OR after invalidate_judge_cache() is called (ProductionEvalScheduler does this
+# at the start of each tick).
 _JUDGES: dict[str, Any] = {}
+
+
+def invalidate_judge_cache() -> None:
+    """Clear cached judges so the next _get_judge() call rebuilds from PromptRegistry."""
+    _JUDGES.clear()
 
 
 def _get_judge(agent_type: str):
     if agent_type not in _JUDGES:
+        from praktor.clinical.evaluation.judge_optimizer import create_calibrated_judge
         if agent_type == "hedis_gap":
             from praktor.clinical.evaluation.hedis_judge import HEDISJudge
-            _JUDGES[agent_type] = HEDISJudge()
+            _JUDGES[agent_type] = create_calibrated_judge(HEDISJudge, "hedis_gap")
         elif agent_type == "diabetes_hedis":
             from praktor.clinical.evaluation.diabetes_hedis_judge import DiabetesHEDISJudge
-            _JUDGES[agent_type] = DiabetesHEDISJudge()
+            _JUDGES[agent_type] = create_calibrated_judge(DiabetesHEDISJudge, "diabetes_hedis")
     return _JUDGES.get(agent_type)
 
 
@@ -241,6 +250,9 @@ async def run_demo(
     from praktor.monitoring.registry import get_registry
     from praktor.monitoring.store import RunRecord, HITLReviewRecord
 
+    from praktor.clinical.evaluation.judge_optimizer import ensure_judges_calibrated
+    await ensure_judges_calibrated(verbose=verbose)
+
     if verbose:
         print("Demo: seeding 10 synthetic members into ClinicalStore...")
     seed_demo_members()
@@ -361,6 +373,9 @@ class ProductionEvalScheduler:
         import time as _time
         while not self._stop:
             try:
+                # Rebuild judges from PromptRegistry each tick so new calibrations
+                # from judge-optimize take effect without a process restart.
+                invalidate_judge_cache()
                 asyncio.run(run_production_eval(hours=1, limit=self._limit, verbose=False))
             except Exception as e:
                 log.warning(f"ProductionEvalScheduler error: {e}")

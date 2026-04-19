@@ -31,7 +31,16 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
+
+from praktor.settings import create_log
+
+log = create_log()
+
+# Custom promoted samples are appended here by `promote_to_golden()`.
+# Built-in samples in this file are never modified.
+GOLDEN_CUSTOM_PATH = Path.home() / ".praktor" / "golden_custom.jsonl"
 
 
 @dataclass
@@ -925,11 +934,25 @@ _DIABETES_SAMPLES: list[GoldenSample] = [
 # ---------------------------------------------------------------------------
 
 def load_golden_samples(agent_type: str | None = None) -> list[GoldenSample]:
-    """Return all golden samples, optionally filtered by agent_type."""
-    all_samples = _HEDIS_SAMPLES + _DIABETES_SAMPLES
-    if agent_type:
-        return [s for s in all_samples if s.agent_type == agent_type]
-    return all_samples
+    """Return all golden samples (built-in + promoted), optionally filtered by agent_type."""
+    samples = [
+        s for s in (_HEDIS_SAMPLES + _DIABETES_SAMPLES)
+        if not agent_type or s.agent_type == agent_type
+    ]
+    if GOLDEN_CUSTOM_PATH.exists():
+        with open(GOLDEN_CUSTOM_PATH) as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    d = json.loads(line)
+                    s = GoldenSample(**d)
+                    if not agent_type or s.agent_type == agent_type:
+                        samples.append(s)
+                except Exception as e:
+                    log.warning(f"load_golden_samples: skipping malformed entry: {e}")
+    return samples
 
 
 def seed_golden_members(store=None) -> None:
@@ -946,6 +969,10 @@ def seed_golden_members(store=None) -> None:
         store = ClinicalStore()
 
     for sample in load_golden_samples():
+        if sample.measurement_year == 0:
+            # Promoted production samples have no clinical seed data — skip.
+            continue
+
         member_hash = hash_member_id(sample.raw_member_id)
 
         # Seed member
@@ -976,3 +1003,134 @@ def seed_golden_members(store=None) -> None:
             od = dict(o)
             od["member_id_hash"] = member_hash
             store.insert_outreach(od)
+
+
+async def promote_to_golden(session_id: str, store=None) -> "GoldenSample | None":
+    """
+    Promote a HITL-approved production run to the custom golden dataset.
+
+    Reads the approved HITL record, validates output length, and appends a
+    GoldenSample to GOLDEN_CUSTOM_PATH. Idempotent — duplicate session_ids skipped.
+    Promoted samples have measurement_year=0 (sentinel: skip member seeding,
+    skip scoring in calibrate_judges; use only as few-shot examples).
+    """
+    if store is None:
+        from praktor.monitoring.store import MonitoringStore
+        store = MonitoringStore()
+
+    # Dedup guard: scan JSONL for existing entry
+    if GOLDEN_CUSTOM_PATH.exists():
+        target_id = f"PROD-{session_id[:8]}"
+        with open(GOLDEN_CUSTOM_PATH) as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    if json.loads(line).get("sample_id") == target_id:
+                        log.info(f"promote_to_golden: {target_id} already in golden custom")
+                        return None
+                except Exception:
+                    pass
+
+    # Fetch approved HITL record
+    reviews = await store.query_hitl_queue(action="approved", limit=500)
+    rec = next((r for r in reviews if r["session_id"] == session_id), None)
+    if not rec:
+        log.warning(f"promote_to_golden: no approved HITL record for {session_id}")
+        return None
+
+    output = rec.get("modified_output") or rec.get("original_output", "")
+    if not output or len(output) < 50:
+        log.warning(f"promote_to_golden: output too short for {session_id}, skipping")
+        return None
+
+    import dataclasses
+    sample = GoldenSample(
+        sample_id=f"PROD-{session_id[:8]}",
+        agent_type=rec["agent_type"],
+        raw_member_id=session_id,
+        measurement_year=0,          # sentinel: skip member seeding + scoring pass
+        clinical_scenario=f"production:{session_id}",
+        reference_output=output,
+        expected_action="address_gaps",
+        expected_measures=[],        # no structured ground truth for promoted samples
+        outcome="approved",
+    )
+
+    GOLDEN_CUSTOM_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with open(GOLDEN_CUSTOM_PATH, "a") as f:
+        f.write(json.dumps(dataclasses.asdict(sample)) + "\n")
+
+    log.info(f"promote_to_golden: added {sample.sample_id} ({sample.agent_type})")
+    return sample
+
+
+async def maybe_recalibrate_after_promotion(
+    agent_type: str,
+    improvement_threshold: float = 0.5,
+    verbose: bool = True,
+) -> bool:
+    """
+    Trigger recalibration when promoted sample count crosses a multiple of 3.
+
+    Rationale: recalibration makes one LLM call per golden sample. Throttling
+    to every 3 promotions amortises the cost. Threshold of +0.5 is above judge
+    variance at temperature=0.0 (~0.3), below noise floor.
+
+    Returns True if a new calibrated version was activated.
+    """
+    if not GOLDEN_CUSTOM_PATH.exists():
+        return False
+
+    with open(GOLDEN_CUSTOM_PATH) as f:
+        promoted_count = 0
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                if json.loads(line).get("agent_type") == agent_type:
+                    promoted_count += 1
+            except Exception:
+                pass
+
+    if promoted_count == 0 or promoted_count % 3 != 0:
+        return False
+
+    from praktor.clinical.evaluation.judge_optimizer import calibrate_judges, _REGISTRY_KEYS
+    from praktor.core.prompt_registry import PromptRegistry
+
+    registry = PromptRegistry()
+    key = _REGISTRY_KEYS.get(agent_type)
+    if not key:
+        return False
+
+    current = registry.get_active(key)
+    current_score = current.avg_score if (current and current.avg_score is not None) else 0.0
+
+    if verbose:
+        print(f"Recalibration check for {agent_type} "
+              f"(promoted={promoted_count}, current_score={current_score:.2f})...")
+
+    reports = await calibrate_judges(agent_type=agent_type, verbose=verbose)
+    if not reports:
+        return False
+
+    report = reports[0]
+
+    # mean_score_after is None when judges are already well-calibrated
+    # (mean_score_before >= threshold). Not a failure — return False cleanly.
+    if report.mean_score_after is None:
+        if verbose:
+            print(f"Recalibration not needed — judges already well-calibrated "
+                  f"(mean={report.mean_score_before:.2f})")
+        return False
+
+    new_score = report.mean_score_after
+    improved = new_score > current_score + improvement_threshold
+    if verbose:
+        delta = new_score - current_score
+        print(f"Recalibration: {current_score:.2f} → {new_score:.2f} "
+              f"(Δ={delta:+.2f}) — {'ACTIVATED' if improved else 'no update'}")
+    return improved

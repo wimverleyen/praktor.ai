@@ -396,6 +396,36 @@ def cmd_judge_optimize(args):
     ))
 
 
+def cmd_promote(args):
+    """
+    Promote a HITL-approved production run to the golden dataset.
+
+    Usage:
+        python -m praktor promote <session_id>
+        python -m praktor promote <session_id> --skip-recalibrate
+    """
+    import asyncio
+    from praktor.clinical.evaluation.golden_dataset import (
+        promote_to_golden,
+        maybe_recalibrate_after_promotion,
+    )
+
+    async def _run():
+        sample = await promote_to_golden(args.session_id)
+        if sample is None:
+            print("Promotion failed — check logs (already promoted, not approved, or output too short).")
+            return
+        print(f"Promoted {sample.sample_id} ({sample.agent_type}) to golden dataset.")
+        if not getattr(args, "skip_recalibrate", False):
+            improved = await maybe_recalibrate_after_promotion(
+                sample.agent_type, verbose=True,
+            )
+            if not improved:
+                print("Recalibration threshold not met — current judge unchanged.")
+
+    asyncio.run(_run())
+
+
 def cmd_aigov(args):
     """
     AIGov obligation commands.
@@ -673,6 +703,12 @@ def main():
     dm.add_argument("--skip-production-eval", action="store_true", dest="skip_production_eval",
                     help="Skip final production eval pass after demo runs")
 
+    # --- promote ---
+    prm = sub.add_parser("promote", help="Promote a HITL-approved run to the golden dataset")
+    prm.add_argument("session_id", help="Session ID of the approved production run")
+    prm.add_argument("--skip-recalibrate", action="store_true", dest="skip_recalibrate",
+                     help="Skip recalibration check after promotion")
+
     # --- judge-optimize ---
     jo = sub.add_parser("judge-optimize", help="Calibrate AI judges using the golden dataset")
     jo.add_argument("--agent", "-a",
@@ -718,6 +754,7 @@ def main():
         "agent":    cmd_agent,
         "eval":             cmd_eval,
         "demo":             cmd_demo,
+        "promote":          cmd_promote,
         "judge-optimize":   cmd_judge_optimize,
         "monitor":          cmd_monitor,
         "demo-governance":  cmd_demo_governance,

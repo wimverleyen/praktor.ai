@@ -371,20 +371,29 @@ async def run_offline_eval(
     from praktor.clinical.agents.diabetes_hedis_agent import DiabetesHEDISDefinition
     from praktor.clinical.evaluation.hedis_judge import HEDISJudge
     from praktor.clinical.evaluation.diabetes_hedis_judge import DiabetesHEDISJudge
+    from praktor.clinical.evaluation.judge_optimizer import (
+        create_calibrated_judge, ensure_judges_calibrated,
+    )
     from praktor.core.agent import Agent
 
     if dry_run and verbose:
         print("DRY RUN — agents skipped; reference outputs will be judged.")
+
+    # 0. Auto-calibrate judges if no active calibrated version exists
+    await ensure_judges_calibrated(
+        agent_type=agent_type,
+        verbose=verbose,
+    )
 
     # 1. Seed all golden members into the clinical store
     if verbose:
         print("Seeding golden members into ClinicalStore...")
     seed_golden_members()
 
-    # 2. Build agent + judge map (judges created ONCE — reused across samples)
+    # 2. Build agent + judge map — load calibrated prompts from PromptRegistry
     agent_map = {
-        "hedis_gap": (Agent(HEDISGapDefinition), HEDISJudge()),
-        "diabetes_hedis": (Agent(DiabetesHEDISDefinition), DiabetesHEDISJudge()),
+        "hedis_gap": (Agent(HEDISGapDefinition), create_calibrated_judge(HEDISJudge, "hedis_gap")),
+        "diabetes_hedis": (Agent(DiabetesHEDISDefinition), create_calibrated_judge(DiabetesHEDISJudge, "diabetes_hedis")),
     }
 
     types_to_run = [agent_type] if agent_type else ["hedis_gap", "diabetes_hedis"]

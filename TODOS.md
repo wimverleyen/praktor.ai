@@ -171,3 +171,33 @@ on `judge_evals.judge_type`. Also add a DB index (`CREATE INDEX IF NOT EXISTS ..
 **Context:** Identified in `/plan-eng-review` (2026-04-18). High priority before first ERM demo with batch agents.
 
 **Depends on / blocked by:** PR4 (AgentDefinition changes) + PR2 (scoreboard SLO query).
+
+---
+
+## [Eval] O(n) JSONL dedup scan in promote_to_golden()
+
+**What:** `promote_to_golden()` in `golden_dataset.py` does a full linear scan of `~/.praktor/golden_custom.jsonl` on every call to check for duplicate `sample_id`s.
+
+**Why:** At <100 promotions, this is <1ms. At 1000+ HITL approvals in a busy production system, the per-promotion file scan accumulates.
+
+**Pros:** Fix makes promotion O(1) per call (load sample_id set once into memory, or migrate to SQLite-backed dedup).
+
+**Cons:** Requires a schema decision: in-memory set (lost on restart) vs SQLite table (durable, heavier).
+
+**Context:** Identified in `/plan-eng-review` (2026-04-19). Not a problem at current scale. Revisit when HITL approval queue regularly exceeds 500 records.
+
+**Depends on:** `promote_to_golden()` implementation in PR10.
+
+---
+
+## [Eval] Defensive ordering in _build_few_shot_block() for promoted samples
+
+**What:** `_build_few_shot_block()` selects `samples[:n]` (first 3). Since promoted samples are appended after built-in samples in `load_golden_samples()`, this works correctly now (10 built-in per type guarantees first 3 are built-in). If future work adds < 3 built-in samples for a new agent type, promoted samples with `clinical_scenario="production:{session_id}"` could appear in the few-shot block.
+
+**Why:** Prevents degraded calibration examples when built-in sample counts are low for new agent types.
+
+**Fix:** Sort samples in `_build_few_shot_block()` input: built-in first (`measurement_year > 0`), promoted last (`measurement_year == 0`).
+
+**Context:** Identified in `/plan-eng-review` (2026-04-19). Currently safe with 10 built-in per type.
+
+**Depends on:** PR10 (golden dataset extension).

@@ -1,0 +1,603 @@
+"""
+Tests for PR10 — Continuous Judge Calibration Loop.
+
+Covers:
+  - create_calibrated_judge(): 4 paths (unknown type, no active version,
+    active version patches adapter, registry exception falls back)
+  - ensure_judges_calibrated(): 3 paths (all calibrated, one missing, both missing)
+  - load_golden_samples() patch: 3 paths (no JSONL, valid JSONL, malformed line)
+  - promote_to_golden(): 4 paths (dedup, no record, short output, success)
+  - maybe_recalibrate_after_promotion(): 5 paths
+  - seed_golden_members() guard: skip measurement_year=0
+  - calibrate_judges() scoring filter: measurement_year=0 excluded
+  - _get_judge() patch: calls create_calibrated_judge
+  - invalidate_judge_cache(): clears _JUDGES
+  - cmd_promote(): 4 paths
+
+All tests use mocks — no live LLM required.
+"""
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch, call
+
+import pytest
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _make_hedis_judge():
+    from praktor.clinical.evaluation.hedis_judge import HEDISJudge
+    with patch("praktor.clinical.evaluation.base_judge.BaseJudge._init_adapters"):
+        j = HEDISJudge()
+    return j
+
+
+def _make_prompt_version(template="CAL_PROMPT", avg_score=8.0, eval_count=5):
+    pv = MagicMock()
+    pv.version_id = "abcdef1234567890"
+    pv.template = template
+    pv.avg_score = avg_score
+    pv.eval_count = eval_count
+    return pv
+
+
+def _make_golden_sample(agent_type="hedis_gap", measurement_year=2024, sample_id="H001"):
+    from praktor.clinical.evaluation.golden_dataset import GoldenSample
+    return GoldenSample(
+        sample_id=sample_id,
+        agent_type=agent_type,
+        raw_member_id="MBR-001",
+        measurement_year=measurement_year,
+        clinical_scenario="Patient has statin gap",
+        reference_output="A" * 100,
+        expected_action="address_gaps",
+        expected_measures=["COL"],
+        outcome="closed",
+    )
+
+
+# ---------------------------------------------------------------------------
+# create_calibrated_judge
+# ---------------------------------------------------------------------------
+
+class TestCreateCalibratedJudge:
+
+    def test_unknown_agent_type_returns_uncalibrated(self):
+        from praktor.clinical.evaluation.judge_optimizer import create_calibrated_judge
+        from praktor.clinical.evaluation.hedis_judge import HEDISJudge
+
+        with patch("praktor.clinical.evaluation.base_judge.BaseJudge._init_adapters"):
+            judge = create_calibrated_judge(HEDISJudge, "unknown_type")
+
+        assert isinstance(judge, HEDISJudge)
+
+    def test_no_active_version_returns_uncalibrated(self):
+        from praktor.clinical.evaluation.judge_optimizer import create_calibrated_judge
+        from praktor.clinical.evaluation.hedis_judge import HEDISJudge
+
+        mock_registry = MagicMock()
+        mock_registry.get_active.return_value = None
+
+        with patch("praktor.clinical.evaluation.base_judge.BaseJudge._init_adapters"):
+            with patch("praktor.core.prompt_registry.PromptRegistry", return_value=mock_registry):
+                judge = create_calibrated_judge(HEDISJudge, "hedis_gap")
+
+        assert isinstance(judge, HEDISJudge)
+        mock_registry.get_active.assert_called_once_with("judge_hedis")
+
+    def test_active_version_patches_eval_adapter(self):
+        from praktor.clinical.evaluation.judge_optimizer import create_calibrated_judge
+        from praktor.clinical.evaluation.hedis_judge import HEDISJudge
+
+        pv = _make_prompt_version(template="CALIBRATED_PROMPT")
+        mock_registry = MagicMock()
+        mock_registry.get_active.return_value = pv
+
+        mock_adapter = MagicMock()
+
+        with patch("praktor.clinical.evaluation.base_judge.BaseJudge._init_adapters"):
+            with patch("praktor.core.prompt_registry.PromptRegistry", return_value=mock_registry):
+                with patch("praktor.LLM.llm_interface.AsyncLLMAdapter", return_value=mock_adapter):
+                    judge = create_calibrated_judge(HEDISJudge, "hedis_gap")
+
+        assert judge._eval_adapter is mock_adapter
+
+    def test_registry_exception_falls_back_to_uncalibrated(self):
+        from praktor.clinical.evaluation.judge_optimizer import create_calibrated_judge
+        from praktor.clinical.evaluation.hedis_judge import HEDISJudge
+
+        with patch("praktor.clinical.evaluation.base_judge.BaseJudge._init_adapters"):
+            with patch("praktor.core.prompt_registry.PromptRegistry",
+                       side_effect=RuntimeError("DB error")):
+                judge = create_calibrated_judge(HEDISJudge, "hedis_gap")
+
+        assert isinstance(judge, HEDISJudge)
+
+
+# ---------------------------------------------------------------------------
+# ensure_judges_calibrated
+# ---------------------------------------------------------------------------
+
+class TestEnsureJudgesCalibrated:
+
+    @pytest.mark.asyncio
+    async def test_all_calibrated_returns_early(self):
+        from praktor.clinical.evaluation.judge_optimizer import ensure_judges_calibrated
+
+        mock_registry = MagicMock()
+        mock_registry.get_active.return_value = _make_prompt_version()
+
+        with patch("praktor.core.prompt_registry.PromptRegistry", return_value=mock_registry):
+            with patch("praktor.clinical.evaluation.judge_optimizer.calibrate_judges",
+                       new_callable=AsyncMock) as mock_cal:
+                await ensure_judges_calibrated()
+
+        mock_cal.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_one_missing_calibrates_that_type(self):
+        from praktor.clinical.evaluation.judge_optimizer import ensure_judges_calibrated
+
+        mock_registry = MagicMock()
+        mock_registry.get_active.side_effect = lambda key: (
+            _make_prompt_version() if key == "judge_hedis" else None
+        )
+
+        with patch("praktor.core.prompt_registry.PromptRegistry", return_value=mock_registry):
+            with patch("praktor.clinical.evaluation.judge_optimizer.calibrate_judges",
+                       new_callable=AsyncMock) as mock_cal:
+                await ensure_judges_calibrated(verbose=False)
+
+        mock_cal.assert_called_once_with(agent_type="diabetes_hedis", verbose=False)
+
+    @pytest.mark.asyncio
+    async def test_both_missing_calibrates_all(self):
+        from praktor.clinical.evaluation.judge_optimizer import ensure_judges_calibrated
+
+        mock_registry = MagicMock()
+        mock_registry.get_active.return_value = None
+
+        with patch("praktor.core.prompt_registry.PromptRegistry", return_value=mock_registry):
+            with patch("praktor.clinical.evaluation.judge_optimizer.calibrate_judges",
+                       new_callable=AsyncMock) as mock_cal:
+                await ensure_judges_calibrated(verbose=False)
+
+        mock_cal.assert_called_once_with(agent_type=None, verbose=False)
+
+
+# ---------------------------------------------------------------------------
+# load_golden_samples patch
+# ---------------------------------------------------------------------------
+
+class TestLoadGoldenSamplesCustomJSONL:
+
+    def test_no_jsonl_returns_builtin_only(self, tmp_path, monkeypatch):
+        import praktor.clinical.evaluation.golden_dataset as gd
+        monkeypatch.setattr(gd, "GOLDEN_CUSTOM_PATH", tmp_path / "nonexistent.jsonl")
+
+        samples = gd.load_golden_samples()
+        assert len(samples) == 20  # 10 HEDIS + 10 diabetes
+
+    def test_valid_jsonl_appends_custom(self, tmp_path, monkeypatch):
+        import praktor.clinical.evaluation.golden_dataset as gd
+        import dataclasses
+
+        custom_path = tmp_path / "golden_custom.jsonl"
+        sample = _make_golden_sample(agent_type="hedis_gap", measurement_year=0,
+                                     sample_id="PROD-abcd1234")
+        custom_path.write_text(json.dumps(dataclasses.asdict(sample)) + "\n")
+
+        monkeypatch.setattr(gd, "GOLDEN_CUSTOM_PATH", custom_path)
+
+        samples = gd.load_golden_samples()
+        assert len(samples) == 21
+        assert any(s.sample_id == "PROD-abcd1234" for s in samples)
+
+    def test_malformed_line_skips_and_warns(self, tmp_path, monkeypatch):
+        import praktor.clinical.evaluation.golden_dataset as gd
+        import dataclasses
+
+        custom_path = tmp_path / "golden_custom.jsonl"
+        good_sample = _make_golden_sample(sample_id="PROD-good1234", measurement_year=0)
+        custom_path.write_text(
+            "NOT VALID JSON\n"
+            + json.dumps(dataclasses.asdict(good_sample)) + "\n"
+        )
+
+        monkeypatch.setattr(gd, "GOLDEN_CUSTOM_PATH", custom_path)
+
+        samples = gd.load_golden_samples()
+        # Malformed line skipped; good entry loaded
+        assert len(samples) == 21
+        assert any(s.sample_id == "PROD-good1234" for s in samples)
+
+
+# ---------------------------------------------------------------------------
+# promote_to_golden
+# ---------------------------------------------------------------------------
+
+class TestPromoteToGolden:
+
+    @pytest.mark.asyncio
+    async def test_already_promoted_returns_none(self, tmp_path, monkeypatch):
+        import praktor.clinical.evaluation.golden_dataset as gd
+        import dataclasses
+
+        custom_path = tmp_path / "golden_custom.jsonl"
+        existing = _make_golden_sample(sample_id="PROD-abcdef12", measurement_year=0)
+        custom_path.write_text(json.dumps(dataclasses.asdict(existing)) + "\n")
+        monkeypatch.setattr(gd, "GOLDEN_CUSTOM_PATH", custom_path)
+
+        result = await gd.promote_to_golden("abcdef12345678", store=MagicMock())
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_no_hitl_record_returns_none(self, tmp_path, monkeypatch):
+        import praktor.clinical.evaluation.golden_dataset as gd
+        monkeypatch.setattr(gd, "GOLDEN_CUSTOM_PATH", tmp_path / "custom.jsonl")
+
+        mock_store = MagicMock()
+        mock_store.query_hitl_queue = AsyncMock(return_value=[])
+
+        result = await gd.promote_to_golden("session-123", store=mock_store)
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_output_too_short_returns_none(self, tmp_path, monkeypatch):
+        import praktor.clinical.evaluation.golden_dataset as gd
+        monkeypatch.setattr(gd, "GOLDEN_CUSTOM_PATH", tmp_path / "custom.jsonl")
+
+        mock_store = MagicMock()
+        mock_store.query_hitl_queue = AsyncMock(return_value=[{
+            "session_id": "sess-abc",
+            "agent_type": "hedis_gap",
+            "original_output": "Too short",
+            "modified_output": None,
+        }])
+
+        result = await gd.promote_to_golden("sess-abc", store=mock_store)
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_success_writes_jsonl_and_returns_sample(self, tmp_path, monkeypatch):
+        import praktor.clinical.evaluation.golden_dataset as gd
+        custom_path = tmp_path / "custom.jsonl"
+        monkeypatch.setattr(gd, "GOLDEN_CUSTOM_PATH", custom_path)
+
+        output = "A" * 100
+        session_id = "sess-abcdef12"
+        mock_store = MagicMock()
+        mock_store.query_hitl_queue = AsyncMock(return_value=[{
+            "session_id": session_id,
+            "agent_type": "hedis_gap",
+            "original_output": output,
+            "modified_output": None,
+        }])
+
+        result = await gd.promote_to_golden(session_id, store=mock_store)
+
+        assert result is not None
+        assert result.sample_id == f"PROD-{session_id[:8]}"
+        assert result.agent_type == "hedis_gap"
+        assert result.measurement_year == 0
+        assert custom_path.exists()
+        lines = [l for l in custom_path.read_text().strip().split("\n") if l]
+        assert len(lines) == 1
+        entry = json.loads(lines[0])
+        assert entry["sample_id"] == f"PROD-{session_id[:8]}"
+
+
+# ---------------------------------------------------------------------------
+# maybe_recalibrate_after_promotion
+# ---------------------------------------------------------------------------
+
+class TestMaybeRecalibrateAfterPromotion:
+
+    @pytest.mark.asyncio
+    async def test_no_jsonl_returns_false(self, tmp_path, monkeypatch):
+        import praktor.clinical.evaluation.golden_dataset as gd
+        monkeypatch.setattr(gd, "GOLDEN_CUSTOM_PATH", tmp_path / "nonexistent.jsonl")
+
+        result = await gd.maybe_recalibrate_after_promotion("hedis_gap", verbose=False)
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_count_not_multiple_of_3_returns_false(self, tmp_path, monkeypatch):
+        import praktor.clinical.evaluation.golden_dataset as gd
+        import dataclasses
+
+        custom_path = tmp_path / "custom.jsonl"
+        entries = [_make_golden_sample(measurement_year=0, sample_id=f"PROD-{i:08x}")
+                   for i in range(2)]
+        custom_path.write_text(
+            "\n".join(json.dumps(dataclasses.asdict(e)) for e in entries) + "\n"
+        )
+        monkeypatch.setattr(gd, "GOLDEN_CUSTOM_PATH", custom_path)
+
+        result = await gd.maybe_recalibrate_after_promotion("hedis_gap", verbose=False)
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_mean_score_after_none_returns_false(self, tmp_path, monkeypatch):
+        import praktor.clinical.evaluation.golden_dataset as gd
+        import dataclasses
+
+        custom_path = tmp_path / "custom.jsonl"
+        entries = [_make_golden_sample(measurement_year=0, sample_id=f"PROD-{i:08x}")
+                   for i in range(3)]
+        custom_path.write_text(
+            "\n".join(json.dumps(dataclasses.asdict(e)) for e in entries) + "\n"
+        )
+        monkeypatch.setattr(gd, "GOLDEN_CUSTOM_PATH", custom_path)
+
+        from praktor.clinical.evaluation.judge_optimizer import CalibrationReport
+        report = CalibrationReport(
+            agent_type="hedis_gap", n_samples=10, mean_score_before=8.5,
+            mean_score_after=None, criteria_means={}, needs_calibration=False,
+            prompt_version_id=None, notes="already calibrated",
+        )
+
+        mock_registry = MagicMock()
+        mock_registry.get_active.return_value = _make_prompt_version(avg_score=8.5)
+
+        with patch("praktor.clinical.evaluation.judge_optimizer.calibrate_judges",
+                   new_callable=AsyncMock, return_value=[report]):
+            with patch("praktor.core.prompt_registry.PromptRegistry",
+                       return_value=mock_registry):
+                result = await gd.maybe_recalibrate_after_promotion(
+                    "hedis_gap", verbose=False
+                )
+
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_insufficient_improvement_returns_false(self, tmp_path, monkeypatch):
+        import praktor.clinical.evaluation.golden_dataset as gd
+        import dataclasses
+
+        custom_path = tmp_path / "custom.jsonl"
+        entries = [_make_golden_sample(measurement_year=0, sample_id=f"PROD-{i:08x}")
+                   for i in range(3)]
+        custom_path.write_text(
+            "\n".join(json.dumps(dataclasses.asdict(e)) for e in entries) + "\n"
+        )
+        monkeypatch.setattr(gd, "GOLDEN_CUSTOM_PATH", custom_path)
+
+        from praktor.clinical.evaluation.judge_optimizer import CalibrationReport
+        report = CalibrationReport(
+            agent_type="hedis_gap", n_samples=10, mean_score_before=7.0,
+            mean_score_after=7.3, criteria_means={}, needs_calibration=True,
+            prompt_version_id="abc", notes="",
+        )
+
+        mock_registry = MagicMock()
+        mock_registry.get_active.return_value = _make_prompt_version(avg_score=7.0)
+
+        with patch("praktor.clinical.evaluation.judge_optimizer.calibrate_judges",
+                   new_callable=AsyncMock, return_value=[report]):
+            with patch("praktor.core.prompt_registry.PromptRegistry",
+                       return_value=mock_registry):
+                result = await gd.maybe_recalibrate_after_promotion(
+                    "hedis_gap", improvement_threshold=0.5, verbose=False
+                )
+
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_sufficient_improvement_returns_true(self, tmp_path, monkeypatch):
+        import praktor.clinical.evaluation.golden_dataset as gd
+        import dataclasses
+
+        custom_path = tmp_path / "custom.jsonl"
+        entries = [_make_golden_sample(measurement_year=0, sample_id=f"PROD-{i:08x}")
+                   for i in range(3)]
+        custom_path.write_text(
+            "\n".join(json.dumps(dataclasses.asdict(e)) for e in entries) + "\n"
+        )
+        monkeypatch.setattr(gd, "GOLDEN_CUSTOM_PATH", custom_path)
+
+        from praktor.clinical.evaluation.judge_optimizer import CalibrationReport
+        report = CalibrationReport(
+            agent_type="hedis_gap", n_samples=10, mean_score_before=7.0,
+            mean_score_after=8.0, criteria_means={}, needs_calibration=True,
+            prompt_version_id="abc", notes="",
+        )
+
+        mock_registry = MagicMock()
+        mock_registry.get_active.return_value = _make_prompt_version(avg_score=7.0)
+
+        with patch("praktor.clinical.evaluation.judge_optimizer.calibrate_judges",
+                   new_callable=AsyncMock, return_value=[report]):
+            with patch("praktor.core.prompt_registry.PromptRegistry",
+                       return_value=mock_registry):
+                result = await gd.maybe_recalibrate_after_promotion(
+                    "hedis_gap", improvement_threshold=0.5, verbose=False
+                )
+
+        assert result is True
+
+
+# ---------------------------------------------------------------------------
+# seed_golden_members guard
+# ---------------------------------------------------------------------------
+
+class TestSeedGoldenMembersSkipsPromoted:
+
+    def test_promoted_sample_not_seeded(self, tmp_path, monkeypatch):
+        import praktor.clinical.evaluation.golden_dataset as gd
+        import dataclasses
+
+        custom_path = tmp_path / "custom.jsonl"
+        promoted = _make_golden_sample(measurement_year=0, sample_id="PROD-skipme1")
+        custom_path.write_text(json.dumps(dataclasses.asdict(promoted)) + "\n")
+        monkeypatch.setattr(gd, "GOLDEN_CUSTOM_PATH", custom_path)
+
+        mock_store = MagicMock()
+        gd.seed_golden_members(store=mock_store)
+
+        # upsert_member should only have been called for built-in samples (20),
+        # not the promoted one (measurement_year=0)
+        assert mock_store.upsert_member.call_count == 20
+
+
+# ---------------------------------------------------------------------------
+# calibrate_judges scoring filter
+# ---------------------------------------------------------------------------
+
+class TestCalibrateJudgesScoringFilter:
+
+    @pytest.mark.asyncio
+    async def test_promoted_samples_excluded_from_scoring(self, tmp_path, monkeypatch):
+        """measurement_year=0 samples must not reach _score_reference_outputs."""
+        import praktor.clinical.evaluation.golden_dataset as gd
+        import dataclasses
+
+        custom_path = tmp_path / "custom.jsonl"
+        promoted = _make_golden_sample(measurement_year=0, sample_id="PROD-filter01")
+        custom_path.write_text(json.dumps(dataclasses.asdict(promoted)) + "\n")
+        monkeypatch.setattr(gd, "GOLDEN_CUSTOM_PATH", custom_path)
+
+        scored_samples = []
+
+        async def _mock_score(judge, samples):
+            scored_samples.extend(samples)
+            return []
+
+        with patch("praktor.clinical.evaluation.judge_optimizer._score_reference_outputs",
+                   side_effect=_mock_score):
+            with patch("praktor.core.prompt_registry.PromptRegistry",
+                       MagicMock()):
+                from praktor.clinical.evaluation.judge_optimizer import calibrate_judges
+                with patch("praktor.clinical.evaluation.hedis_judge.HEDISJudge.__init__",
+                           return_value=None):
+                    try:
+                        await calibrate_judges(agent_type="hedis_gap", verbose=False)
+                    except Exception:
+                        pass
+
+        for s in scored_samples:
+            assert s.measurement_year != 0, (
+                f"Promoted sample {s.sample_id} (measurement_year=0) reached scoring"
+            )
+
+
+# ---------------------------------------------------------------------------
+# production_eval patches
+# ---------------------------------------------------------------------------
+
+class TestProductionEvalPatches:
+
+    def test_invalidate_judge_cache_clears_dict(self):
+        from praktor.clinical.evaluation import production_eval as pe
+        pe._JUDGES["hedis_gap"] = MagicMock()
+        pe._JUDGES["diabetes_hedis"] = MagicMock()
+
+        pe.invalidate_judge_cache()
+
+        assert pe._JUDGES == {}
+
+    def test_get_judge_hedis_calls_factory(self):
+        from praktor.clinical.evaluation import production_eval as pe
+        pe._JUDGES.clear()
+
+        mock_judge = MagicMock()
+        with patch("praktor.clinical.evaluation.judge_optimizer.create_calibrated_judge",
+                   return_value=mock_judge) as mock_factory:
+            with patch("praktor.clinical.evaluation.hedis_judge.HEDISJudge"):
+                j = pe._get_judge("hedis_gap")
+
+        assert j is mock_judge
+        pe._JUDGES.clear()
+
+    def test_get_judge_diabetes_calls_factory(self):
+        from praktor.clinical.evaluation import production_eval as pe
+        pe._JUDGES.clear()
+
+        mock_judge = MagicMock()
+        with patch("praktor.clinical.evaluation.judge_optimizer.create_calibrated_judge",
+                   return_value=mock_judge):
+            with patch("praktor.clinical.evaluation.diabetes_hedis_judge.DiabetesHEDISJudge"):
+                j = pe._get_judge("diabetes_hedis")
+
+        assert j is mock_judge
+        pe._JUDGES.clear()
+
+
+# ---------------------------------------------------------------------------
+# cmd_promote
+# ---------------------------------------------------------------------------
+
+class TestCmdPromote:
+
+    def _run(self, args_ns, monkeypatch, promote_return, recal_return=False):
+        """Helper: run cmd_promote with mocked promote + recalibrate."""
+        from praktor.__main__ import cmd_promote
+
+        async def _mock_promote(session_id, store=None):
+            return promote_return
+
+        async def _mock_recal(agent_type, verbose=True):
+            return recal_return
+
+        monkeypatch.setattr(
+            "praktor.clinical.evaluation.golden_dataset.promote_to_golden",
+            _mock_promote,
+        )
+        monkeypatch.setattr(
+            "praktor.clinical.evaluation.golden_dataset.maybe_recalibrate_after_promotion",
+            _mock_recal,
+        )
+        cmd_promote(args_ns)
+
+    def test_promote_fails_prints_failure(self, monkeypatch, capsys):
+        args = SimpleNamespace(session_id="sess-fail", skip_recalibrate=False)
+        self._run(args, monkeypatch, promote_return=None)
+        out = capsys.readouterr().out
+        assert "failed" in out.lower()
+
+    def test_success_improved_prints_activation(self, monkeypatch, capsys):
+        from praktor.clinical.evaluation.golden_dataset import GoldenSample
+        sample = _make_golden_sample(sample_id="PROD-sess1234")
+        args = SimpleNamespace(session_id="sess-1234abcd", skip_recalibrate=False)
+        self._run(args, monkeypatch, promote_return=sample, recal_return=True)
+        out = capsys.readouterr().out
+        assert "PROD-sess1234" in out
+
+    def test_success_not_improved_prints_no_update(self, monkeypatch, capsys):
+        sample = _make_golden_sample(sample_id="PROD-sess5678")
+        args = SimpleNamespace(session_id="sess-5678abcd", skip_recalibrate=False)
+        self._run(args, monkeypatch, promote_return=sample, recal_return=False)
+        out = capsys.readouterr().out
+        assert "threshold" in out.lower() or "unchanged" in out.lower()
+
+    def test_skip_recalibrate_flag_skips_recal(self, monkeypatch, capsys):
+        from praktor.__main__ import cmd_promote
+
+        recal_called = []
+
+        async def _mock_promote(session_id, store=None):
+            return _make_golden_sample()
+
+        async def _mock_recal(agent_type, verbose=True):
+            recal_called.append(True)
+            return False
+
+        monkeypatch.setattr(
+            "praktor.clinical.evaluation.golden_dataset.promote_to_golden",
+            _mock_promote,
+        )
+        monkeypatch.setattr(
+            "praktor.clinical.evaluation.golden_dataset.maybe_recalibrate_after_promotion",
+            _mock_recal,
+        )
+
+        args = SimpleNamespace(session_id="sess-skiprecal", skip_recalibrate=True)
+        cmd_promote(args)
+
+        assert recal_called == []

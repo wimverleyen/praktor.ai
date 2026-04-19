@@ -34,6 +34,13 @@ _CALIBRATION_THRESHOLD = 7.0
 # Number of golden samples to include as few-shot examples in the prompt
 _FEW_SHOT_COUNT = 3
 
+# Maps agent_type → PromptRegistry key. Single source of truth imported by
+# golden_dataset.py and production_eval.py — change here to change everywhere.
+_REGISTRY_KEYS: dict[str, str] = {
+    "hedis_gap":      "judge_hedis",
+    "diabetes_hedis": "judge_diabetes_hedis",
+}
+
 
 @dataclass
 class CalibrationReport:
@@ -87,6 +94,72 @@ def _compute_criteria_means(scores: list, criteria_keys: list[str]) -> dict[str,
     return means
 
 
+def create_calibrated_judge(judge_cls, agent_type: str, model: str | None = None):
+    """
+    Create a judge, loading the active calibrated prompt from PromptRegistry if available.
+
+    Falls back to the judge's default hardcoded prompt when:
+      - agent_type has no registry key mapping
+      - no active version exists in the registry
+      - the registry raises (missing config, schema change, permissions)
+    """
+    from praktor.settings import MODEL
+    effective_model = model or MODEL
+    judge = judge_cls(model=effective_model)
+
+    registry_key = _REGISTRY_KEYS.get(agent_type)
+    if not registry_key:
+        return judge
+
+    try:
+        from praktor.core.prompt_registry import PromptRegistry
+        from praktor.LLM.llm_interface import AsyncLLMAdapter
+        registry = PromptRegistry()
+        active = registry.get_active(registry_key)
+        if active:
+            judge._eval_adapter = AsyncLLMAdapter(
+                prompt_template=active.template,
+                model=effective_model,
+                temperature=0.0,
+            )
+            log.info(
+                f"Loaded calibrated prompt {active.version_id[:8]} "
+                f"for {registry_key} (evals={active.eval_count}, score={active.avg_score})"
+            )
+    except Exception as e:
+        log.warning(
+            f"create_calibrated_judge: registry lookup failed for {registry_key}, "
+            f"using default prompt: {e}"
+        )
+
+    return judge
+
+
+async def ensure_judges_calibrated(
+    agent_type: str | None = None,
+    verbose: bool = True,
+) -> None:
+    """
+    Auto-calibrate judges that have no active calibrated version in PromptRegistry.
+
+    Called at the top of run_offline_eval() and run_demo() so the first eval
+    run automatically calibrates rather than requiring a manual judge-optimize step.
+    """
+    from praktor.core.prompt_registry import PromptRegistry
+    registry = PromptRegistry()
+    types = [agent_type] if agent_type else list(_REGISTRY_KEYS.keys())
+    needs_cal = [t for t in types if registry.get_active(_REGISTRY_KEYS[t]) is None]
+
+    if not needs_cal:
+        return
+
+    if verbose:
+        print(f"No calibrated judge found for {needs_cal} — auto-calibrating...")
+
+    cal_agent = needs_cal[0] if len(needs_cal) == 1 else None
+    await calibrate_judges(agent_type=cal_agent, verbose=verbose)
+
+
 def _build_few_shot_block(samples: list, n: int) -> str:
     """
     Build a few-shot calibration block from N golden samples.
@@ -133,7 +206,7 @@ async def calibrate_judges(
         "hedis_gap": {
             "judge_cls": HEDISJudge,
             "base_prompt": _CLINICAL_EVAL_PROMPT,
-            "registry_key": "judge_hedis",
+            "registry_key": _REGISTRY_KEYS["hedis_gap"],
             "criteria": [
                 "accuracy", "completeness", "relevance", "conciseness", "clarity",
                 "gap_identification_accuracy", "action_appropriateness",
@@ -143,7 +216,7 @@ async def calibrate_judges(
         "diabetes_hedis": {
             "judge_cls": DiabetesHEDISJudge,
             "base_prompt": _DIABETES_EVAL_PROMPT,
-            "registry_key": "judge_diabetes_hedis",
+            "registry_key": _REGISTRY_KEYS["diabetes_hedis"],
             "criteria": [
                 "accuracy", "completeness", "relevance", "conciseness", "clarity",
                 "inertia_detection_accuracy", "escalation_ladder_correctness",
@@ -164,8 +237,10 @@ async def calibrate_judges(
 
         judge = cfg["judge_cls"](model=effective_model)
 
-        # Step 1: score reference outputs
-        scores_before = await _score_reference_outputs(judge, samples)
+        # Step 1: score reference outputs — exclude promoted samples (measurement_year=0)
+        # because their clinical_scenario is a session ID, not a real clinical context.
+        scoring_samples = [s for s in samples if s.measurement_year != 0]
+        scores_before = await _score_reference_outputs(judge, scoring_samples)
         if not scores_before:
             reports.append(CalibrationReport(
                 agent_type=atype, n_samples=0,
@@ -249,7 +324,7 @@ async def calibrate_judges(
 
         report = CalibrationReport(
             agent_type=atype,
-            n_samples=len(scores_before),
+            n_samples=len(scoring_samples),
             mean_score_before=overall_before,
             mean_score_after=overall_after,
             criteria_means=means_before,
