@@ -91,8 +91,42 @@ class O7Auditable(Obligation):
         )
 
     async def check_test(self, dataset: PrivacyTestDataset) -> ObligationEvent:
-        """NA — OTel span completeness cannot be verified from static test data."""
-        return self._na_event(EnforcementPoint.G_TEST, "otel_not_testable_from_static_data")
+        """
+        PASS if ≥95% of span records carry all required OTel audit fields.
+        NA if the dataset has no records or records don't look like span data.
+        """
+        _REQUIRED = {"obligation_id", "enforcement_point", "predicate_result", "event_ts"}
+        _COMPLETENESS_THRESHOLD = 0.95
+
+        records = dataset.records
+        if not records:
+            return self._na_event(EnforcementPoint.G_TEST, "test_dataset_has_no_span_records")
+
+        # Only score records that have at least one OTel span attribute
+        span_records = [r for r in records if any(k in r for k in _REQUIRED)]
+        if not span_records:
+            return self._na_event(EnforcementPoint.G_TEST, "test_dataset_not_span_data")
+
+        complete = sum(1 for r in span_records if _REQUIRED.issubset(r.keys()))
+        completeness = complete / len(span_records)
+        predicate = (
+            PredicateResult.PASS if completeness >= _COMPLETENESS_THRESHOLD else PredicateResult.FAIL
+        )
+        evidence_bytes, sha256 = make_evidence({
+            "obligation": self.id,
+            "enforcement_point": "G-TEST",
+            "span_records_total": len(span_records),
+            "span_records_complete": complete,
+            "completeness": round(completeness, 4),
+            "threshold": _COMPLETENESS_THRESHOLD,
+        })
+        return self._event(
+            EnforcementPoint.G_TEST,
+            predicate,
+            severity=Severity.INFO if predicate == PredicateResult.PASS else Severity.HIGH,
+            regulatory_tags=_REGULATORY_TAGS,
+            evidence=EvidenceRef(uri="", sha256=sha256, size_bytes=len(evidence_bytes)),
+        )
 
     async def check_run(self, payload: str, response: str) -> ObligationEvent:
         """PASS if tracer is initialized, NA if SDK disabled, FAIL if expected but inactive."""

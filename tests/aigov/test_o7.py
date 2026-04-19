@@ -25,13 +25,55 @@ def _otel_state(sdk_disabled=False, tracer_initialized=False):
 
 class TestCheckTest:
     @pytest.mark.asyncio
-    async def test_always_na(self):
+    async def test_empty_dataset_na(self):
         ob = O7Auditable()
         ds = PrivacyTestDataset(records=[], labels=[])
         ev = await ob.check_test(ds)
         assert ev.predicate_result == PredicateResult.NA
-        assert ev.deferred_reason == "otel_not_testable_from_static_data"
+        assert ev.deferred_reason == "test_dataset_has_no_span_records"
         assert ev.enforcement_point == EnforcementPoint.G_TEST
+
+    @pytest.mark.asyncio
+    async def test_non_span_records_na(self):
+        ob = O7Auditable()
+        ds = PrivacyTestDataset(
+            records=[{"ssn": "123-45-6789"}, {"email": "a@b.com"}],
+            labels=["US_SSN", "EMAIL"],
+        )
+        ev = await ob.check_test(ds)
+        assert ev.predicate_result == PredicateResult.NA
+        assert ev.deferred_reason == "test_dataset_not_span_data"
+
+    @pytest.mark.asyncio
+    async def test_complete_span_records_pass(self):
+        ob = O7Auditable()
+        span = {
+            "obligation_id": "O7",
+            "enforcement_point": "G-RUN",
+            "predicate_result": "PASS",
+            "event_ts": "2026-01-01T00:00:00Z",
+        }
+        ds = PrivacyTestDataset(records=[span, span, span], labels=["", "", ""])
+        ev = await ob.check_test(ds)
+        assert ev.predicate_result == PredicateResult.PASS
+        assert ev.enforcement_point == EnforcementPoint.G_TEST
+
+    @pytest.mark.asyncio
+    async def test_incomplete_span_records_fail(self):
+        ob = O7Auditable()
+        good = {
+            "obligation_id": "O7",
+            "enforcement_point": "G-RUN",
+            "predicate_result": "PASS",
+            "event_ts": "2026-01-01T00:00:00Z",
+        }
+        bad = {"obligation_id": "O7"}  # missing 3 required fields
+        records = [good] + [bad] * 20
+        labels = [""] * len(records)
+        ds = PrivacyTestDataset(records=records, labels=labels)
+        ev = await ob.check_test(ds)
+        assert ev.predicate_result == PredicateResult.FAIL
+        assert ev.severity == Severity.HIGH
 
 
 class TestCheckBuild:

@@ -1,11 +1,14 @@
-"""Tests for O1, O4-O6, O8-O11 NA-stub obligations."""
+"""Tests for O1, O4, O6, O8-O11 NA-stub obligations.
+
+O5 (Grounded Outputs) and O7 (Auditable) have real implementations and are
+tested separately in test_o5.py and test_o7.py.
+"""
 import pytest
 
 from praktor.aigov.event import EnforcementPoint, PredicateResult
 from praktor.aigov.manifests import DataFlowManifest, PrivacyTestDataset
 from praktor.aigov.obligations.o1_bounded_action import O1BoundedAction
 from praktor.aigov.obligations.o4_fairness import O4Fairness
-from praktor.aigov.obligations.o5_grounded_outputs import O5GroundedOutputs
 from praktor.aigov.obligations.o6_goal_integrity import O6GoalIntegrity
 from praktor.aigov.obligations.o8_human_oversight import O8HumanOversight
 from praktor.aigov.obligations.o9_change_attestation import O9ChangeAttestation
@@ -17,7 +20,6 @@ from datetime import datetime, timezone
 _ALL_STUBS = [
     O1BoundedAction,
     O4Fairness,
-    O5GroundedOutputs,
     O6GoalIntegrity,
     O8HumanOversight,
     O9ChangeAttestation,
@@ -25,7 +27,7 @@ _ALL_STUBS = [
     O11UITransparency,
 ]
 
-_EXPECTED_IDS = ["O1", "O4", "O5", "O6", "O8", "O9", "O10", "O11"]
+_EXPECTED_IDS = ["O1", "O4", "O6", "O8", "O9", "O10", "O11"]
 
 
 def _manifest():

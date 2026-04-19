@@ -18,7 +18,9 @@ Usage:
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
+import os
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -122,7 +124,17 @@ def create_attestation(
         "obligation_statuses": statuses,
     }
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
-    signature_hex = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    canonical_bytes = canonical.encode("utf-8")
+
+    signing_key = os.environ.get("AIGOV_SIGNING_KEY", "")
+    if signing_key:
+        signature_hex = hmac.new(
+            signing_key.encode("utf-8"), canonical_bytes, hashlib.sha256
+        ).hexdigest()
+        signer_key_id = "hmac-sha256"
+    else:
+        signature_hex = hashlib.sha256(canonical_bytes).hexdigest()
+        signer_key_id = "sha256-content-hash"
 
     return AttestationRecord(
         attestation_id=str(ULID()),
@@ -133,5 +145,6 @@ def create_attestation(
         valid_until=valid_until,
         obligation_statuses=statuses,
         signature_hex=signature_hex,
+        signer_key_id=signer_key_id,
         notes=notes,
     )
