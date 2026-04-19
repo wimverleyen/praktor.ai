@@ -1,18 +1,33 @@
-# docker compose up — starts RabbitMQ + praktor consumer
-# docker compose run praktor publish --agent thank_you --data '{"adjective":"warm","position":"CTO","content":"Great chat"}'
+# docker compose up            — start full stack (RabbitMQ + praktor + metrics + Prometheus + Grafana)
+# docker compose up praktor    — consumer only
+# docker compose run --rm praktor publish --agent thank_you --data '{"adjective":"warm","position":"CTO","content":"Great chat"}'
+
+networks:
+  praktor-net:
+    driver: bridge
+
+volumes:
+  praktor-audit:
+  prometheus-data:
+  grafana-data:
 
 services:
+
+  # ---------- Message queue ----------
   rabbitmq:
     image: rabbitmq:3-management
     ports:
       - "5672:5672"
       - "15672:15672"
+    networks:
+      - praktor-net
     healthcheck:
       test: rabbitmq-diagnostics -q ping
       interval: 10s
       timeout: 5s
       retries: 5
 
+  # ---------- Agent consumer ----------
   praktor:
     build:
       context: .
@@ -21,14 +36,67 @@ services:
     depends_on:
       rabbitmq:
         condition: service_healthy
-    network_mode: host  # Access host Ollama on localhost:11434
+    networks:
+      - praktor-net
+    extra_hosts:
+      - "host.docker.internal:host-gateway"  # reach host Ollama on Linux
     environment:
-      PRAKTOR_MODEL: "qwen2.5"
-      RABBITMQ_URL: "amqp://guest:guest@localhost:5672/"
+      PRAKTOR_MODEL: "claude-sonnet-4-6"
+      RABBITMQ_URL: "amqp://guest:guest@rabbitmq:5672/"
       PRAKTOR_CONCURRENCY: "4"
       CACHE_DIR: "/tmp/praktor_cache"
+      OLLAMA_HOST: "http://host.docker.internal:11434"
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"
     volumes:
-      - praktor-audit:/app/audit  # Persist audit logs
+      - praktor-audit:/app/audit
 
-volumes:
-  praktor-audit:
+  # ---------- Prometheus scrape endpoint ----------
+  praktor-metrics:
+    build:
+      context: .
+      args:
+        EXTRAS: ""
+    command: ["monitor", "serve", "--port", "8080"]
+    ports:
+      - "8080:8080"
+    networks:
+      - praktor-net
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      PRAKTOR_MODEL: "claude-sonnet-4-6"
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"
+    volumes:
+      - praktor-audit:/app/audit
+
+  # ---------- Prometheus ----------
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    networks:
+      - praktor-net
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.enable-lifecycle"
+    depends_on:
+      - praktor-metrics
+
+  # ---------- Grafana ----------
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    networks:
+      - praktor-net
+    volumes:
+      - grafana-data:/var/lib/grafana
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: "admin"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    depends_on:
+      - prometheus

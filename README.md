@@ -849,38 +849,39 @@ PYTHONPATH=praktor streamlit run praktor/ui/app.py --server.port 8502
 
 ### Grafana
 
-Grafana reads metrics from the Prometheus endpoint that praktor exposes.
+Prometheus and Grafana are part of the Docker Compose stack — no separate setup needed.
 
-**Step 1 — start the Prometheus scrape server**
+**Start the full stack**
 
 ```bash
-python -m praktor monitor serve --port 8080
-# Metrics available at http://localhost:8080/metrics
+docker compose up
 ```
 
-**Step 2 — start Grafana** (Docker is the fastest path)
+This starts: RabbitMQ · praktor consumer · praktor metrics endpoint (`:8080`) · Prometheus (`:9090`) · Grafana (`:3000`).
+
+**Add the praktor data source in Grafana**
+
+1. Open `http://localhost:3000` (login: `admin` / `admin`)
+2. **Connections → Data sources → Add new → Prometheus**
+3. URL: `http://prometheus:9090`
+4. Click **Save & test** — expect **"Successfully queried the Prometheus API"**
+
+**Import the pre-built dashboard**
 
 ```bash
-docker run -d --name grafana -p 3000:3000 grafana/grafana
-# Opens at http://localhost:3000  (default login: admin / admin)
-```
-
-**Step 3 — add Prometheus as a data source**
-
-1. Grafana → **Connections → Data sources → Add new**
-2. Type: **Prometheus**, URL: `http://host.docker.internal:8080`
-3. Click **Save & test**
-
-**Step 4 — import the pre-built dashboard**
-
-```bash
-# Generate the 21-panel dashboard JSON
 python -m praktor monitor export grafana > praktor-dashboard.json
 ```
 
-Then in Grafana: **Dashboards → Import → Upload JSON file** → select `praktor-dashboard.json`.
+Grafana → **Dashboards → Import → Upload JSON file** → select `praktor-dashboard.json`.
 
 The dashboard includes: run rate, token throughput, cost by model, latency percentiles (P50/P95/P99), error rate, judge score distribution, cache efficiency, tool call breakdown, and business KPIs — all filterable by `agent` and `model`.
+
+**Verify Prometheus is scraping**
+
+```bash
+# Check scrape targets — praktor-metrics should show state=UP
+curl http://localhost:9090/api/v1/targets | python -m json.tool | grep -A3 praktor
+```
 
 ### Demo data
 
