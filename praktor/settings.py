@@ -21,6 +21,9 @@ VECTOR_DB = os.getenv('VECTOR_DB')
 RABBITMQ_URL = os.getenv('RABBITMQ_URL', 'amqp://guest:guest@localhost/')
 CONCURRENCY = int(os.getenv('PRAKTOR_CONCURRENCY', '4'))
 
+# --- Judge evaluation ---
+PRAKTOR_JUDGE_CONCURRENCY = int(os.getenv('PRAKTOR_JUDGE_CONCURRENCY', '3'))
+
 # --- Cache ---
 CACHE_DIR = os.getenv('CACHE_DIR', '/tmp/praktor_cache')
 CACHE_TTL = int(os.getenv('CACHE_TTL', '3600'))

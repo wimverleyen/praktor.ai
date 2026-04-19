@@ -618,3 +618,88 @@ class TestCollectorScoreHelpers:
             await record_judge("session-1", "hedis", score, version_id="v1", judge_type="hedis")
         finally:
             reg_mod.get_registry = original_get
+
+
+# ---------------------------------------------------------------------------
+# PR11a — aggregate(judge_type=...) filter
+# ---------------------------------------------------------------------------
+
+class TestAggregateJudgeTypeFilter:
+
+    @pytest.mark.asyncio
+    async def test_aggregate_judge_type_filters_by_type(self, tmp_path):
+        """aggregate(judge_type='hedis') returns only HEDIS scores."""
+        from praktor.monitoring.store import MonitoringStore
+        import time
+
+        db = str(tmp_path / "test.db")
+        store = MonitoringStore(db_path=db)
+
+        # Insert one HEDIS eval and one diabetes eval directly
+        import sqlite3
+        conn = sqlite3.connect(db)
+        now = time.time()
+        # HEDIS eval with score 8.0
+        conn.execute(
+            "INSERT INTO judge_evals (session_id, agent_type, judge_type, score, timestamp) "
+            "VALUES (?, ?, ?, ?, ?)",
+            ("s1", "hedis_gap", "hedis", 8.0, now),
+        )
+        # Diabetes eval with score 5.0
+        conn.execute(
+            "INSERT INTO judge_evals (session_id, agent_type, judge_type, score, timestamp) "
+            "VALUES (?, ?, ?, ?, ?)",
+            ("s2", "diabetes_hedis", "diabetes_hedis", 5.0, now),
+        )
+        # Insert a minimal agent_run so aggregate() doesn't return empty
+        conn.execute(
+            "INSERT INTO agent_runs (session_id, agent_type, model, status, timestamp, "
+            "duration_ms, input_tokens, output_tokens, total_tokens, cost_usd, passes, cached) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            ("s1", "hedis_gap", "test", "ok", now, 100.0, 10, 5, 15, 0.0, 1, 0),
+        )
+        conn.commit()
+        conn.close()
+
+        result = await store.aggregate(judge_type="hedis")
+
+        # Only the HEDIS score (8.0) should be counted
+        assert result["avg_judge_score"] == pytest.approx(8.0, abs=0.01)
+        assert result["judge_eval_count"] == 1
+
+    @pytest.mark.asyncio
+    async def test_aggregate_judge_type_none_returns_all(self, tmp_path):
+        """aggregate(judge_type=None) returns all scores — backward compatible."""
+        from praktor.monitoring.store import MonitoringStore
+        import time
+
+        db = str(tmp_path / "test.db")
+        store = MonitoringStore(db_path=db)
+
+        import sqlite3
+        conn = sqlite3.connect(db)
+        now = time.time()
+        conn.execute(
+            "INSERT INTO judge_evals (session_id, agent_type, judge_type, score, timestamp) "
+            "VALUES (?, ?, ?, ?, ?)",
+            ("s1", "hedis_gap", "hedis", 8.0, now),
+        )
+        conn.execute(
+            "INSERT INTO judge_evals (session_id, agent_type, judge_type, score, timestamp) "
+            "VALUES (?, ?, ?, ?, ?)",
+            ("s2", "diabetes_hedis", "diabetes_hedis", 4.0, now),
+        )
+        conn.execute(
+            "INSERT INTO agent_runs (session_id, agent_type, model, status, timestamp, "
+            "duration_ms, input_tokens, output_tokens, total_tokens, cost_usd, passes, cached) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            ("s1", "hedis_gap", "test", "ok", now, 100.0, 10, 5, 15, 0.0, 1, 0),
+        )
+        conn.commit()
+        conn.close()
+
+        result = await store.aggregate(judge_type=None)
+
+        # Both scores (8.0 + 4.0) / 2 = 6.0
+        assert result["avg_judge_score"] == pytest.approx(6.0, abs=0.01)
+        assert result["judge_eval_count"] == 2

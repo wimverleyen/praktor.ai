@@ -76,6 +76,37 @@ def _run_async(coro):
         return asyncio.run(coro)
 
 
+def _safe_load(fn, *args, **kwargs):
+    """Call fn(*args, **kwargs); return Exception on failure instead of raising."""
+    try:
+        return fn(*args, **kwargs)
+    except Exception as exc:
+        return exc
+
+
+def _relative_time(ts: float | None) -> str:
+    if ts is None:
+        return "—"
+    delta = int(time.time() - ts)
+    if delta < 60:
+        return f"{delta}s ago"
+    if delta < 3600:
+        return f"{delta // 60}m ago"
+    if delta < 86400:
+        return f"{delta // 3600}h ago"
+    return f"{delta // 86400}d ago"
+
+
+def _score_label(score: float | None) -> str:
+    if score is None:
+        return "—"
+    if score >= 8.0:
+        return f"✅ {score:.1f}/10"
+    if score >= 6.0:
+        return f"⚠️ {score:.1f}/10"
+    return f"❌ {score:.1f}/10"
+
+
 def _stars_badge(weight: float) -> str:
     if weight == 3.0:
         return "🟢 3x STARS"
@@ -119,54 +150,36 @@ def _get_tracker():
 
 @st.cache_data(ttl=30)
 def _load_pending_recs(limit: int = 100) -> list[dict]:
-    try:
-        return _get_tracker().get_review_queue(limit=limit)
-    except Exception:
-        return []
+    return _get_tracker().get_review_queue(limit=limit)
 
 
 @st.cache_data(ttl=30)
 def _load_member_gaps(member_id_hash: str) -> list[dict]:
-    try:
-        return _get_store().get_open_gaps(member_id_hash)
-    except Exception:
-        return []
+    return _get_store().get_open_gaps(member_id_hash)
 
 
 @st.cache_data(ttl=30)
 def _load_member_profile(member_id_hash: str) -> dict | None:
-    try:
-        return _get_store().get_member(member_id_hash)
-    except Exception:
-        return None
+    return _get_store().get_member(member_id_hash)
 
 
 @st.cache_data(ttl=30)
 def _load_labs(member_id_hash: str) -> list[dict]:
-    try:
-        return _get_store().get_labs(member_id_hash)
-    except Exception:
-        return []
+    return _get_store().get_labs(member_id_hash)
 
 
 @st.cache_data(ttl=30)
 def _load_outreach(member_id_hash: str) -> list[dict]:
-    try:
-        return _get_store().get_outreach(member_id_hash)
-    except Exception:
-        return []
+    return _get_store().get_outreach(member_id_hash)
 
 
 @st.cache_data(ttl=30)
 def _load_pdc(member_id_hash: str) -> list[dict]:
-    try:
-        return _get_store().get_pdc(member_id_hash)
-    except Exception:
-        return []
+    return _get_store().get_pdc(member_id_hash)
 
 
 # ---------------------------------------------------------------------------
-# Tab 1: Dataset
+# Tab 1: Training Data
 # ---------------------------------------------------------------------------
 
 _DIABETES_STORIES = {
@@ -214,12 +227,57 @@ _MY2026_MEASURES = [
 ]
 
 
+def _render_promoted_samples():
+    """Production Examples sub-view: promoted HITL-approved runs."""
+    try:
+        from praktor.clinical.evaluation.golden_dataset import load_golden_samples
+        samples = load_golden_samples()
+        promoted = [s for s in samples if s.is_promoted]
+    except Exception as e:
+        st.warning("Couldn't load promoted samples.")
+        with st.expander("Show details"):
+            st.code(str(e))
+        return
+
+    if not promoted:
+        st.info(
+            "🧪 No promoted production examples yet.\n\n"
+            "Approve recommendations in the **✅ Review** tab, then use the "
+            "'Save as AI training example' button to promote them here."
+        )
+        if st.button("Go to Predict tab to generate recommendations", key="ds_goto_predict"):
+            pass
+        return
+
+    st.caption(f"{len(promoted)} production run{'s' if len(promoted) != 1 else ''} promoted to training corpus")
+    for s in promoted:
+        label = f"`{s.sample_id}` · {s.agent_type} · {s.clinical_scenario[:60]}…"
+        with st.expander(label, expanded=False):
+            st.markdown(f"**Agent type:** `{s.agent_type}`")
+            st.markdown(f"**Expected action:** `{s.expected_action}`")
+            st.markdown(f"**Scenario:** {s.clinical_scenario}")
+            st.markdown("**Reference output:**")
+            st.code(s.reference_output[:400], language="text")
+
+
 def tab_dataset():
-    st.subheader("📊 Golden Dataset")
+    st.subheader("📚 Training Data")
     st.caption(
-        "**Step 1 of 5** · Three synthetic members engineered to demonstrate "
-        "specific clinical reasoning patterns. Seed this data before running the agent."
+        "**Step 1 of 5** · AI training corpus: golden reference examples + promoted "
+        "production runs. Seed demo data, then review the corpus before running the agent."
     )
+
+    # Sub-toggle: Golden Corpus / Production Examples
+    view = st.radio(
+        "View",
+        ["🥇 Golden Corpus", "🧪 Production Examples"],
+        horizontal=True,
+        key="dataset_view",
+    )
+
+    if view == "🧪 Production Examples":
+        _render_promoted_samples()
+        return
 
     # Seed data button
     col_seed, col_spacer = st.columns([2, 3])
@@ -253,9 +311,18 @@ def tab_dataset():
     from praktor.clinical.schemas import hash_member_id
     for raw_id, info in _DIABETES_STORIES.items():
         member_hash = hash_member_id(raw_id)
-        profile = _load_member_profile(member_hash)
-        gaps = _load_member_gaps(member_hash)
-        labs = _load_labs(member_hash)
+        profile = _safe_load(_load_member_profile, member_hash)
+        gaps = _safe_load(_load_member_gaps, member_hash)
+        labs = _safe_load(_load_labs, member_hash)
+
+        if isinstance(gaps, Exception):
+            st.warning(
+                "Couldn't load member data — your work is safe, but the database may be unavailable.",
+                icon="⚠️",
+            )
+            with st.expander("Show details"):
+                st.code(str(gaps))
+            continue
 
         with st.container(border=True):
             col_profile, col_clinical = st.columns([1, 2])
@@ -399,7 +466,7 @@ def tab_predict():
             st.code(result.stderr or result.stdout, language="text")
             st.caption(
                 "If you see import errors, make sure demo data is seeded: "
-                "go to the **📊 Dataset** tab and click 'Seed demo data'."
+                "go to the **📚 Training Data** tab and click 'Seed demo data'."
             )
 
 
@@ -463,6 +530,115 @@ def _render_rec_detail(rec: dict):
         st.caption(f"Reasoning trace: `{rec['span_id']}`")
 
 
+def _render_ai_output_review(rec: dict):
+    """AI Output Review panel: criteria grid, AIGov pills, 1-click promote."""
+    judge_score = rec.get("judge_score_pre")
+    session_id = rec.get("session_id", "")
+
+    st.divider()
+    st.markdown(
+        f'<span style="background:{COLORS["promote_bg"]};color:{COLORS["promote_text"]};'
+        f'padding:2px 8px;border-radius:4px;font-size:12px;font-weight:600;">'
+        f'🤖 AI Output Review</span>',
+        unsafe_allow_html=True,
+    )
+
+    # Judge score summary
+    if judge_score is not None:
+        st.markdown(f"**Judge overall:** {_score_label(judge_score)}")
+    else:
+        st.caption("No judge score yet — run evaluation from the ⚖️ Evaluate tab.")
+
+    # Look up full criteria breakdown from judge_evals table
+    evals_result = _safe_load(_load_judge_evals, 168, None, None, 500)
+    if not isinstance(evals_result, Exception) and evals_result:
+        session_evals = [e for e in evals_result if e.get("session_id") == session_id]
+        if session_evals:
+            row = session_evals[0]
+            jtype = row.get("judge_type", "general")
+            criteria = _BASE_CRITERIA + (
+                _HEDIS_CRITERIA if jtype == "hedis" else
+                _DIABETES_CRITERIA if jtype == "diabetes_hedis" else []
+            )
+            if criteria:
+                st.markdown("**Criteria breakdown**")
+                cols = st.columns(min(len(criteria), 5))
+                for i, crit in enumerate(criteria):
+                    val = row.get(crit)
+                    cols[i % 5].metric(
+                        _CRITERION_LABELS.get(crit, crit),
+                        f"{val:.1f}" if val is not None else "—",
+                    )
+
+    # AIGov obligation pills
+    _render_obligation_pills(rec)
+
+    # 1-click promote button
+    st.markdown("**Promote to AI Training Data**")
+    promote_key = f"promote_1click_{rec.get('id', '')}"
+    if st.button(
+        "⭐ Save as AI training example",
+        key=promote_key,
+        help="Approve + promote this recommendation to the golden dataset in one click",
+    ):
+        with st.spinner("Promoting to training corpus..."):
+            try:
+                _get_tracker().record_care_mgr_action(rec["id"], "approved")
+                import asyncio as _aio
+                from praktor.clinical.evaluation.golden_dataset import promote_to_golden
+                _run_async(promote_to_golden(session_id=session_id, verbose=False))
+                st.success(
+                    "✅ Saved to AI training corpus. "
+                    "Every 3 promotions trigger automatic judge recalibration."
+                )
+                st.cache_data.clear()
+                st.rerun()
+            except Exception as e:
+                st.error("Promotion failed.")
+                with st.expander("Show details"):
+                    st.code(str(e))
+
+
+def _render_obligation_pills(rec: dict):
+    """Render AIGov O1-O11 obligation status pills for a recommendation."""
+    try:
+        session_id = rec.get("session_id", "")
+        if not session_id:
+            return
+
+        from praktor.aigov.ledger.store import LedgerStore
+        ledger = LedgerStore()
+        events = ledger.get_events(session_id=session_id) if hasattr(ledger, "get_events") else []
+    except Exception:
+        return
+
+    if not events:
+        return
+
+    status_map = {e.obligation_id: e.status for e in events}
+    pill_colors = {
+        "PASS": (COLORS["status_ok"], "white"),
+        "FAIL": (COLORS["status_err"], "white"),
+        "AMBER": (COLORS["status_warn"], "white"),
+        "NA": (COLORS["status_muted"], "white"),
+    }
+
+    pills_html = '<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px">'
+    for o_id in sorted(status_map.keys()):
+        status = status_map[o_id]
+        bg, fg = pill_colors.get(status, ("#888", "white"))
+        pills_html += (
+            f'<span title="{o_id}: {status}" style="background:{bg};color:{fg};'
+            f'padding:2px 6px;border-radius:10px;font-size:11px;font-weight:500;">'
+            f'{o_id}</span>'
+        )
+    pills_html += "</div>"
+
+    if status_map:
+        st.markdown("**AIGov obligations**")
+        st.markdown(pills_html, unsafe_allow_html=True)
+
+
 def tab_review():
     st.subheader("✅ Review")
     st.caption(
@@ -482,7 +658,20 @@ def tab_review():
         if st.button("Refresh", key="review_refresh", use_container_width=True):
             st.cache_data.clear()
 
-    recs = _load_pending_recs(100)
+    recs_result = _safe_load(_load_pending_recs, 100)
+    if isinstance(recs_result, Exception):
+        st.markdown(
+            f'<div style="background:{COLORS["warn_bg"]};border:1px solid {COLORS["warn_border"]};'
+            f'border-radius:6px;padding:12px 16px;color:{COLORS["warn_text"]}">'
+            f'<strong>⚠️ Couldn\'t load the review queue</strong> — your work is safe. '
+            f'The database may be temporarily unavailable. Try refreshing.</div>',
+            unsafe_allow_html=True,
+        )
+        with st.expander("Show details"):
+            st.code(str(recs_result))
+        return
+
+    recs = recs_result
     if action_filter != "All":
         recs = [r for r in recs if r.get("action_type") == action_filter]
 
@@ -536,6 +725,7 @@ def tab_review():
 
         with st.expander(label, expanded=(i == 0)):
             _render_rec_detail(rec)
+            _render_ai_output_review(rec)
 
 
 # ---------------------------------------------------------------------------
@@ -659,6 +849,38 @@ def tab_evaluate():
         "Clinical and diabetes agents add domain-specific criteria on top."
     )
 
+    # E6: Calibration badge
+    try:
+        from praktor.clinical.evaluation.golden_dataset import load_golden_samples
+        from praktor.core.prompt_registry import PromptRegistry
+        samples = load_golden_samples()
+        n_golden = sum(1 for s in samples if not s.is_promoted)
+        n_promoted = sum(1 for s in samples if s.is_promoted)
+        registry = PromptRegistry()
+        hedis_ver = registry.get_active("judge_hedis")
+        dm_ver = registry.get_active("judge_diabetes_hedis")
+
+        badge_cols = st.columns([2, 2, 2, 2])
+        badge_cols[0].metric("Golden examples", n_golden, help="Built-in reference samples")
+        badge_cols[1].metric(
+            "Promoted examples", n_promoted,
+            help="Production runs saved as training examples",
+        )
+        badge_cols[2].metric(
+            "HEDIS judge version",
+            hedis_ver.version_id[:8] if hedis_ver else "uncalibrated",
+            help=f"Avg score: {hedis_ver.avg_score:.2f}" if hedis_ver and hedis_ver.avg_score else None,
+        )
+        badge_cols[3].metric(
+            "Diabetes judge version",
+            dm_ver.version_id[:8] if dm_ver else "uncalibrated",
+            help=f"Avg score: {dm_ver.avg_score:.2f}" if dm_ver and dm_ver.avg_score else None,
+        )
+    except Exception:
+        pass
+
+    st.divider()
+
     # Dimension reference
     with st.expander("📐 Evaluation Dimensions", expanded=False):
         st.markdown("**Base (all agents) — 5 criteria**")
@@ -718,9 +940,18 @@ def tab_evaluate():
             eval_question = st.text_area("Question / task prompt", height=80,
                                          placeholder="What should the care manager do for member X?",
                                          key="eval_question")
-            eval_response = st.text_area("Agent response to evaluate", height=200,
-                                         placeholder="ACTION_TYPE: pcp_warm_outreach\nRATIONALE: ...",
-                                         key="eval_response")
+            eval_response = st.text_area(
+                "Agent response to evaluate", height=200,
+                placeholder=(
+                    "ACTION_TYPE: pcp_warm_outreach\n"
+                    "RATIONALE: Member has open GSD gap with A1c 8.7%...\n"
+                    "DRAFT_MESSAGE: Hi Maria, your care team recommends...\n"
+                    "CLOSURE_PROBABILITY: 0.72\n"
+                    "LANGUAGE: en\n\n"
+                    "Tip: include all 5 fields for highest completeness score."
+                ),
+                key="eval_response",
+            )
             eval_context = st.text_area("Member context (optional, de-identified)", height=80,
                                         placeholder="Member has GSD open, A1c 8.7%, eGFR 52...",
                                         key="eval_context")
@@ -1201,7 +1432,7 @@ def _sidebar():
 
         st.markdown("**Workflow**")
         st.markdown(
-            "1. **📊 Dataset** — view synthetic members\n"
+            "1. **📚 Training Data** — golden corpus + production examples\n"
             "2. **🤖 Predict** — run the agent\n"
             "3. **✅ Review** — approve recommendations\n"
             "4. **⚖️ Evaluate** — LLM judge scores\n"
@@ -1209,8 +1440,10 @@ def _sidebar():
         )
         st.divider()
 
-        try:
-            pending = _load_pending_recs(1000)
+        pending = _safe_load(_load_pending_recs, 1000)
+        if isinstance(pending, Exception):
+            st.caption("Queue unavailable — DB may be starting up.")
+        else:
             triple = sum(
                 1 for r in pending
                 if r.get("measure_id") in ("MAC", "MAD", "MAP", "GSD")
@@ -1219,8 +1452,6 @@ def _sidebar():
             if triple:
                 st.metric("High-weight gaps", triple,
                           help="3x Stars: MAC/MAD/MAP/GSD")
-        except Exception:
-            st.caption("No queue data yet.")
 
         st.divider()
         st.caption("**Stars triple-weighted:**")
@@ -1243,7 +1474,7 @@ def main():
     st.caption("Diabetes HEDIS Gap Closure · MY 2026 · Agentic AI with LLM-as-judge")
 
     tab1, tab2, tab3, tab4, tab5 = st.tabs(
-        ["📊 Dataset", "🤖 Predict", "✅ Review", "⚖️ Evaluate", "🔍 Traces"]
+        ["📚 Training Data", "🤖 Predict", "✅ Review", "⚖️ Evaluate", "🔍 Traces"]
     )
 
     with tab1:

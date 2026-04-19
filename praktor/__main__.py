@@ -426,6 +426,55 @@ def cmd_promote(args):
     asyncio.run(_run())
 
 
+def cmd_golden_rollback(args):
+    """
+    Remove a promoted sample from the custom golden dataset.
+
+    Usage:
+        python -m praktor golden-rollback <sample_id>
+        python -m praktor golden-rollback <sample_id> --dry-run
+        python -m praktor golden-rollback --list
+    """
+    from praktor.clinical.evaluation.golden_dataset import (
+        rollback_golden_sample, load_golden_samples, GOLDEN_CUSTOM_PATH,
+    )
+
+    if getattr(args, "list", False):
+        samples = load_golden_samples()
+        promoted = [s for s in samples if s.is_promoted]
+        if not promoted:
+            print("No promoted samples in the custom dataset.")
+            return
+        print(f"\nPromoted samples in {GOLDEN_CUSTOM_PATH}:")
+        print(f"  {'Sample ID':<36} {'Agent type':<20}  Scenario")
+        print("  " + "─" * 80)
+        for s in promoted:
+            print(f"  {s.sample_id:<36} {s.agent_type:<20}  {s.clinical_scenario[:50]}")
+        print()
+        return
+
+    sample_id = getattr(args, "sample_id", None)
+    if not sample_id:
+        print("Error: provide <sample_id> or use --list to see available IDs", file=sys.stderr)
+        sys.exit(1)
+
+    dry_run = getattr(args, "dry_run", False)
+    removed = rollback_golden_sample(
+        sample_id=sample_id,
+        dry_run=dry_run,
+        verbose=True,
+    )
+
+    if not removed:
+        print(f"Error: sample_id={sample_id!r} not found.", file=sys.stderr)
+        sys.exit(1)
+
+    if dry_run:
+        print("\n[dry-run] No changes written. Remove --dry-run to apply.")
+    else:
+        print(f"\nRollback complete. Run `python -m praktor judge-optimize` to recalibrate.")
+
+
 def cmd_aigov(args):
     """
     AIGov obligation commands.
@@ -717,6 +766,16 @@ def main():
     jo.add_argument("--model", "-m", default=None,
                     help="Override LLM model for judge (default: from settings)")
 
+    # --- golden-rollback ---
+    gr = sub.add_parser("golden-rollback",
+                        help="Remove a promoted sample from the custom golden dataset")
+    gr.add_argument("sample_id", nargs="?", default=None,
+                    help="Sample ID to remove (see --list for available IDs)")
+    gr.add_argument("--dry-run", action="store_true", dest="dry_run",
+                    help="Show what would be removed without writing changes")
+    gr.add_argument("--list", action="store_true",
+                    help="List all promoted samples instead of removing one")
+
     # --- aigov ---
     aig = sub.add_parser("aigov", help="AIGov obligation checks, scoreboard, and attestation")
     aig_sub = aig.add_subparsers(dest="aigov_cmd", required=True)
@@ -756,6 +815,7 @@ def main():
         "demo":             cmd_demo,
         "promote":          cmd_promote,
         "judge-optimize":   cmd_judge_optimize,
+        "golden-rollback":  cmd_golden_rollback,
         "monitor":          cmd_monitor,
         "demo-governance":  cmd_demo_governance,
         "prompt":           cmd_prompt,

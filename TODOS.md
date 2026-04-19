@@ -201,3 +201,31 @@ on `judge_evals.judge_type`. Also add a DB index (`CREATE INDEX IF NOT EXISTS ..
 **Context:** Identified in `/plan-eng-review` (2026-04-19). Currently safe with 10 built-in per type.
 
 **Depends on:** PR10 (golden dataset extension).
+
+---
+
+## [Design] Formalize design system via /design-consultation
+
+**What:** Run `/design-consultation` to produce a DESIGN.md covering: typography scale (Inter as body, JetBrains Mono as code), spacing rhythm (4/8/12/16/24/32px), component vocabulary (expander, metric, badge, pill, criteria cell, promote panel), color semantics (status, promote, warn, urgency — now in theme.py but no spec for usage rules).
+
+**Why:** PR11b designed 5 new component types (calibration badge, promote panel, AIGov scoreboard, criteria grid, obligation pills) from first principles using the finalized.html mockup. Without a DESIGN.md, the next engineer designing a new component has no reference and will invent a 6th visual language.
+
+**Pros:** All future UI PRs start from a defined system instead of first principles. Design review passes become faster (calibrate against DESIGN.md instead of universal principles). theme.py tokens become meaningful in context.
+
+**Cons:** ~30 min session with `/design-consultation`. The finalized.html mockup already exists and encodes most of the decisions — DESIGN.md is a formalization step.
+
+**Context:** Identified in `/plan-design-review` (2026-04-19). `theme.py` now has 21 color tokens (including PR11b promote_* and warn_* families). DESIGN.md is the natural next level.
+
+---
+
+## [UI] Update 5-tab workflow description after Training Data rename
+
+**What:** `clinical_app.py` line ~1204 contains a hard-coded workflow description string referencing "📊 Dataset". After PR11b renames the tab to "📚 Training Data", this copy becomes stale. Also update the welcome screen sidebar copy at line ~1246 where tab names are listed.
+
+**Why:** The onboarding workflow copy ("1. 📊 Dataset — view synthetic members") will show the old tab name after the rename. A care manager reading the step list will see "Dataset" but the tab says "Training Data".
+
+**Pros:** One-line fix. Keeps onboarding copy in sync with actual tab labels.
+
+**Cons:** None — trivial change. Can be done in the same PR11b commit.
+
+**Context:** Identified in `/plan-design-review` (2026-04-19). Part of the Dataset→Training Data rename decision made during this review.

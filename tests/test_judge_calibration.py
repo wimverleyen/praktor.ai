@@ -85,7 +85,7 @@ class TestCreateCalibratedJudge:
         mock_registry.get_active.return_value = None
 
         with patch("praktor.clinical.evaluation.base_judge.BaseJudge._init_adapters"):
-            with patch("praktor.core.prompt_registry.PromptRegistry", return_value=mock_registry):
+            with patch("praktor.clinical.evaluation.judge_optimizer.PromptRegistry", return_value=mock_registry):
                 judge = create_calibrated_judge(HEDISJudge, "hedis_gap")
 
         assert isinstance(judge, HEDISJudge)
@@ -102,8 +102,8 @@ class TestCreateCalibratedJudge:
         mock_adapter = MagicMock()
 
         with patch("praktor.clinical.evaluation.base_judge.BaseJudge._init_adapters"):
-            with patch("praktor.core.prompt_registry.PromptRegistry", return_value=mock_registry):
-                with patch("praktor.LLM.llm_interface.AsyncLLMAdapter", return_value=mock_adapter):
+            with patch("praktor.clinical.evaluation.judge_optimizer.PromptRegistry", return_value=mock_registry):
+                with patch("praktor.clinical.evaluation.judge_optimizer.AsyncLLMAdapter", return_value=mock_adapter):
                     judge = create_calibrated_judge(HEDISJudge, "hedis_gap")
 
         assert judge._eval_adapter is mock_adapter
@@ -113,7 +113,7 @@ class TestCreateCalibratedJudge:
         from praktor.clinical.evaluation.hedis_judge import HEDISJudge
 
         with patch("praktor.clinical.evaluation.base_judge.BaseJudge._init_adapters"):
-            with patch("praktor.core.prompt_registry.PromptRegistry",
+            with patch("praktor.clinical.evaluation.judge_optimizer.PromptRegistry",
                        side_effect=RuntimeError("DB error")):
                 judge = create_calibrated_judge(HEDISJudge, "hedis_gap")
 
@@ -133,7 +133,7 @@ class TestEnsureJudgesCalibrated:
         mock_registry = MagicMock()
         mock_registry.get_active.return_value = _make_prompt_version()
 
-        with patch("praktor.core.prompt_registry.PromptRegistry", return_value=mock_registry):
+        with patch("praktor.clinical.evaluation.judge_optimizer.PromptRegistry", return_value=mock_registry):
             with patch("praktor.clinical.evaluation.judge_optimizer.calibrate_judges",
                        new_callable=AsyncMock) as mock_cal:
                 await ensure_judges_calibrated()
@@ -149,7 +149,7 @@ class TestEnsureJudgesCalibrated:
             _make_prompt_version() if key == "judge_hedis" else None
         )
 
-        with patch("praktor.core.prompt_registry.PromptRegistry", return_value=mock_registry):
+        with patch("praktor.clinical.evaluation.judge_optimizer.PromptRegistry", return_value=mock_registry):
             with patch("praktor.clinical.evaluation.judge_optimizer.calibrate_judges",
                        new_callable=AsyncMock) as mock_cal:
                 await ensure_judges_calibrated(verbose=False)
@@ -163,7 +163,7 @@ class TestEnsureJudgesCalibrated:
         mock_registry = MagicMock()
         mock_registry.get_active.return_value = None
 
-        with patch("praktor.core.prompt_registry.PromptRegistry", return_value=mock_registry):
+        with patch("praktor.clinical.evaluation.judge_optimizer.PromptRegistry", return_value=mock_registry):
             with patch("praktor.clinical.evaluation.judge_optimizer.calibrate_judges",
                        new_callable=AsyncMock) as mock_cal:
                 await ensure_judges_calibrated(verbose=False)
@@ -601,3 +601,143 @@ class TestCmdPromote:
         cmd_promote(args)
 
         assert recal_called == []
+
+
+# ---------------------------------------------------------------------------
+# PR11a — is_promoted @property + record_kpi in calibrate_judges
+# ---------------------------------------------------------------------------
+
+class TestIsPromotedProperty:
+
+    def test_is_promoted_true_when_year_zero(self):
+        from praktor.clinical.evaluation.golden_dataset import GoldenSample
+        s = GoldenSample(
+            sample_id="PROD-test",
+            agent_type="hedis_gap",
+            raw_member_id="T001",
+            measurement_year=0,
+            clinical_scenario="production:sess123",
+            reference_output="ACTION_TYPE: pcp_warm_outreach",
+            expected_action="pcp_warm_outreach",
+            expected_measures=["GSD"],
+            outcome="pending",
+        )
+        assert s.is_promoted is True
+
+    def test_is_promoted_false_when_year_nonzero(self):
+        from praktor.clinical.evaluation.golden_dataset import GoldenSample
+        s = GoldenSample(
+            sample_id="GS-001",
+            agent_type="hedis_gap",
+            raw_member_id="T002",
+            measurement_year=2024,
+            clinical_scenario="Untested GSD, A1c missing",
+            reference_output="ACTION_TYPE: pcp_warm_outreach",
+            expected_action="pcp_warm_outreach",
+            expected_measures=["GSD"],
+            outcome="closed",
+        )
+        assert s.is_promoted is False
+
+
+class TestCalibrationKpi:
+
+    @staticmethod
+    def _fake_score(overall: float) -> object:
+        """Create a fake score object with numeric criteria that won't break statistics.mean()."""
+        attrs = {
+            "overall": overall,
+            "accuracy": overall, "completeness": overall, "relevance": overall,
+            "conciseness": overall, "clarity": overall,
+            "gap_identification_accuracy": overall, "action_appropriateness": overall,
+            "evidence_citation_quality": overall, "safety_flag_coverage": overall,
+        }
+        return SimpleNamespace(**attrs)
+
+    @pytest.mark.asyncio
+    async def test_record_kpi_called_for_score_before(self, monkeypatch):
+        """calibrate_judges() emits judge.calibration.score_before.<atype> KPI."""
+        from praktor.clinical.evaluation import judge_optimizer as jopt
+
+        kpi_calls = []
+
+        def _mock_record_kpi(name, value):
+            kpi_calls.append((name, value))
+
+        monkeypatch.setattr(jopt, "record_kpi", _mock_record_kpi)
+
+        fake_score = self._fake_score(8.5)
+
+        async def _mock_score(judge, samples):
+            return [fake_score] * len(samples) if samples else []
+
+        monkeypatch.setattr(jopt, "_score_reference_outputs", _mock_score)
+
+        from praktor.clinical.evaluation.golden_dataset import GoldenSample
+        fake_sample = GoldenSample(
+            sample_id="GS-001", agent_type="hedis_gap", raw_member_id="T1",
+            measurement_year=2024, clinical_scenario="test", reference_output="test",
+            expected_action="pcp_warm_outreach", expected_measures=["GSD"], outcome="closed",
+        )
+
+        monkeypatch.setattr(
+            "praktor.clinical.evaluation.golden_dataset.load_golden_samples",
+            lambda agent_type=None: [fake_sample],
+        )
+
+        with patch("praktor.clinical.evaluation.judge_optimizer.PromptRegistry") as MockReg:
+            MockReg.return_value.get_active.return_value = None
+
+            await jopt.calibrate_judges(agent_type="hedis_gap", verbose=False)
+
+        score_before_calls = [n for n, _ in kpi_calls if "score_before" in n]
+        assert len(score_before_calls) >= 1
+        assert score_before_calls[0] == "judge.calibration.score_before.hedis_gap"
+
+    @pytest.mark.asyncio
+    async def test_record_kpi_called_for_score_after_when_calibrated(self, monkeypatch):
+        """calibrate_judges() emits score_after KPI only when calibration ran."""
+        from praktor.clinical.evaluation import judge_optimizer as jopt
+
+        kpi_calls = []
+
+        def _mock_record_kpi(name, value):
+            kpi_calls.append((name, value))
+
+        monkeypatch.setattr(jopt, "record_kpi", _mock_record_kpi)
+
+        call_count = [0]
+
+        async def _mock_score(judge, samples):
+            call_count[0] += 1
+            overall = 5.0 if call_count[0] == 1 else 8.0
+            return [self._fake_score(overall)] * max(len(samples), 1)
+
+        monkeypatch.setattr(jopt, "_score_reference_outputs", _mock_score)
+
+        from praktor.clinical.evaluation.golden_dataset import GoldenSample
+        fake_sample = GoldenSample(
+            sample_id="GS-002", agent_type="hedis_gap", raw_member_id="T2",
+            measurement_year=2024, clinical_scenario="test2", reference_output="test2",
+            expected_action="pcp_warm_outreach", expected_measures=["GSD"], outcome="closed",
+        )
+
+        monkeypatch.setattr(
+            "praktor.clinical.evaluation.golden_dataset.load_golden_samples",
+            lambda agent_type=None: [fake_sample],
+        )
+
+        with patch("praktor.clinical.evaluation.judge_optimizer.PromptRegistry") as MockReg:
+            MockReg.return_value.get_active.return_value = None
+            saved_ver = MagicMock(version_id="v-calibrated")
+            MockReg.return_value.save.return_value = saved_ver
+            MockReg.return_value.set_active.return_value = None
+            MockReg.return_value.record_eval.return_value = None
+
+            with patch("praktor.clinical.evaluation.judge_optimizer.AsyncLLMAdapter"):
+                await jopt.calibrate_judges(agent_type="hedis_gap", verbose=False)
+
+        score_after_calls = [n for n, _ in kpi_calls if "score_after" in n]
+        # score_after is emitted only when calibration ran (overall_before < threshold)
+        assert len(score_after_calls) >= 1
+        assert score_after_calls[0] == "judge.calibration.score_after.hedis_gap"

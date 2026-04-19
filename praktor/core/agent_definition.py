@@ -129,6 +129,14 @@ class AgentDefinition:
     (Decision 11A). obligation_bundle always wins if both are provided.
     """
 
+    registry_key: str | None = None
+    """
+    PromptRegistry key used to load a calibrated judge prompt for this agent.
+    Example: "judge_hedis" or "judge_diabetes_hedis".
+    When set, __post_init__ validates the key exists in the PromptRegistry and
+    raises ValueError if not found (fail-fast on misconfiguration).
+    """
+
     def __post_init__(self) -> None:
         template_bytes = self.prompt_template.encode("utf-8", errors="replace")
         self.prompt_template_hash = hashlib.sha256(template_bytes).hexdigest()
@@ -139,3 +147,13 @@ class AgentDefinition:
         # obligation_bundle is not explicitly set.
         if self.obligation_bundle is None and self.governance_policy is not None:
             self.obligation_bundle = self.governance_policy.to_obligation_bundle()
+
+        # Validate registry_key exists in PromptRegistry at instantiation time.
+        if self.registry_key is not None:
+            from praktor.core.prompt_registry import PromptRegistry
+            registry = PromptRegistry()
+            if registry.get_active(self.registry_key) is None:
+                raise ValueError(
+                    f"AgentDefinition registry_key={self.registry_key!r} not found in "
+                    f"PromptRegistry. Register the key before creating this AgentDefinition."
+                )

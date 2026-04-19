@@ -130,6 +130,7 @@ CREATE INDEX IF NOT EXISTS idx_runs_agent     ON agent_runs(agent_type);
 CREATE INDEX IF NOT EXISTS idx_runs_ts        ON agent_runs(timestamp);
 CREATE INDEX IF NOT EXISTS idx_runs_session   ON agent_runs(session_id);
 CREATE INDEX IF NOT EXISTS idx_judge_agent    ON judge_evals(agent_type);
+CREATE INDEX IF NOT EXISTS idx_judge_type     ON judge_evals(judge_type);
 CREATE INDEX IF NOT EXISTS idx_kpi_name       ON kpi_events(name);
 """
 
@@ -386,6 +387,7 @@ class MonitoringStore:
         self,
         agent: str | None = None,
         hours: float = 24,
+        judge_type: str | None = None,
     ) -> dict[str, Any]:
         """
         Return a summary dict for dashboard / CLI display.
@@ -398,10 +400,18 @@ class MonitoringStore:
             avg_judge_score, judge_eval_count
             by_agent: {name: {runs, tokens, cost, avg_latency}}
             by_model: {name: {runs, tokens, cost}}
-        """
-        return await asyncio.to_thread(self._aggregate_sync, agent, hours)
 
-    def _aggregate_sync(self, agent: str | None, hours: float) -> dict[str, Any]:
+        judge_type: when set, avg_judge_score only includes evals for that judge type.
+            Prevents mixing 10-dim diabetes scores with 5-dim general scores.
+        """
+        return await asyncio.to_thread(self._aggregate_sync, agent, hours, judge_type)
+
+    def _aggregate_sync(
+        self,
+        agent: str | None,
+        hours: float,
+        judge_type: str | None = None,
+    ) -> dict[str, Any]:
         since = time.time() - hours * 3600
         params_filter: list[Any] = [since]
         agent_clause = ""
@@ -415,9 +425,19 @@ class MonitoringStore:
                 params_filter,
             ).fetchall()
 
+            judge_params: list[Any] = [since]
+            judge_agent_clause = agent_clause
+            judge_type_clause = ""
+            if agent:
+                judge_params.append(agent)
+            if judge_type is not None:
+                judge_type_clause = "AND judge_type = ?"
+                judge_params.append(judge_type)
+
             judge_rows = conn.execute(
-                f"SELECT score FROM judge_evals WHERE timestamp >= ? {agent_clause}",
-                params_filter,
+                f"SELECT score FROM judge_evals "
+                f"WHERE timestamp >= ? {judge_agent_clause} {judge_type_clause}",
+                judge_params,
             ).fetchall()
 
         if not runs:

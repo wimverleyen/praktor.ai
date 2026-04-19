@@ -61,6 +61,11 @@ class GoldenSample:
     labs: list[dict] = field(default_factory=list)
     outreach: list[dict] = field(default_factory=list)
 
+    @property
+    def is_promoted(self) -> bool:
+        """True when this sample was promoted from a production run (measurement_year sentinel = 0)."""
+        return self.measurement_year == 0
+
 
 # ---------------------------------------------------------------------------
 # Helper — shared measurement year
@@ -1098,11 +1103,11 @@ async def maybe_recalibrate_after_promotion(
     if promoted_count == 0 or promoted_count % 3 != 0:
         return False
 
-    from praktor.clinical.evaluation.judge_optimizer import calibrate_judges, _REGISTRY_KEYS
+    from praktor.clinical.evaluation.judge_optimizer import calibrate_judges, _AGENT_TYPE_REGISTRY
     from praktor.core.prompt_registry import PromptRegistry
 
     registry = PromptRegistry()
-    key = _REGISTRY_KEYS.get(agent_type)
+    key = _AGENT_TYPE_REGISTRY.get(agent_type)
     if not key:
         return False
 
@@ -1134,3 +1139,58 @@ async def maybe_recalibrate_after_promotion(
         print(f"Recalibration: {current_score:.2f} → {new_score:.2f} "
               f"(Δ={delta:+.2f}) — {'ACTIVATED' if improved else 'no update'}")
     return improved
+
+
+def rollback_golden_sample(
+    sample_id: str,
+    dry_run: bool = False,
+    verbose: bool = True,
+) -> bool:
+    """
+    Remove a promoted sample from the custom golden dataset by sample_id.
+
+    Returns True if the sample was found and removed (or would be in dry-run mode).
+    Returns False if sample_id was not found in the custom dataset.
+    """
+    if not GOLDEN_CUSTOM_PATH.exists():
+        if verbose:
+            print(f"rollback: custom dataset not found at {GOLDEN_CUSTOM_PATH}")
+        return False
+
+    lines = []
+    removed = None
+    with open(GOLDEN_CUSTOM_PATH) as f:
+        for line in f:
+            stripped = line.strip()
+            if not stripped:
+                continue
+            try:
+                obj = json.loads(stripped)
+                if obj.get("sample_id") == sample_id:
+                    removed = obj
+                    continue
+            except json.JSONDecodeError:
+                pass
+            lines.append(stripped)
+
+    if removed is None:
+        if verbose:
+            print(f"rollback: sample_id={sample_id!r} not found in custom dataset")
+        return False
+
+    if dry_run:
+        if verbose:
+            print(f"[dry-run] Would remove: {sample_id} ({removed.get('agent_type')}) "
+                  f"from {GOLDEN_CUSTOM_PATH}")
+            print(f"[dry-run] Remaining samples: {len(lines)}")
+        return True
+
+    with open(GOLDEN_CUSTOM_PATH, "w") as f:
+        for line in lines:
+            f.write(line + "\n")
+
+    if verbose:
+        print(f"Removed: {sample_id} ({removed.get('agent_type')}) "
+              f"from {GOLDEN_CUSTOM_PATH}")
+        print(f"Remaining promoted samples: {len(lines)}")
+    return True

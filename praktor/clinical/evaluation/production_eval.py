@@ -376,6 +376,9 @@ class ProductionEvalScheduler:
                 # Rebuild judges from PromptRegistry each tick so new calibrations
                 # from judge-optimize take effect without a process restart.
                 invalidate_judge_cache()
+                # asyncio.run() inside a thread is correct here: ProductionEvalScheduler
+                # runs in a daemon thread (via threading.Thread), not inside an existing
+                # event loop, so asyncio.run() creates a fresh loop for each tick.
                 asyncio.run(run_production_eval(hours=1, limit=self._limit, verbose=False))
             except Exception as e:
                 log.warning(f"ProductionEvalScheduler error: {e}")

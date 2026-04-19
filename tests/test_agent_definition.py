@@ -1,5 +1,6 @@
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 from pydantic import BaseModel
 from praktor.core.agent_definition import (
@@ -18,11 +19,12 @@ class _SimpleInput(BaseModel):
 class TestAgentDefinition:
 
     def test_defaults(self):
-        defn = AgentDefinition(
-            name="simple",
-            prompt_template="Write about {topic}",
-            input_schema=_SimpleInput,
-        )
+        with patch("praktor.core.agent_definition._DEFAULT_MODEL", "qwen2.5"):
+            defn = AgentDefinition(
+                name="simple",
+                prompt_template="Write about {topic}",
+                input_schema=_SimpleInput,
+            )
         assert defn.llm_model == "qwen2.5"
         assert defn.temperature == 0.0
         assert defn.memory_policy == MemoryPolicy.NONE
@@ -110,3 +112,59 @@ class TestAgentDefinition:
         from pydantic import ValidationError
         with pytest.raises(ValidationError):
             defn.input_schema()  # missing required field
+
+
+# ---------------------------------------------------------------------------
+# PR11a — registry_key field + validator
+# ---------------------------------------------------------------------------
+
+class TestRegistryKey:
+
+    def test_registry_key_field_present_no_error_when_none(self):
+        """registry_key defaults to None — no validation fires."""
+        defn = AgentDefinition(
+            name="no_key",
+            prompt_template="Write about {topic}",
+            input_schema=_SimpleInput,
+        )
+        assert defn.registry_key is None
+
+    def test_registry_key_raises_value_error_when_not_in_registry(self):
+        """registry_key set to unknown key raises ValueError at instantiation."""
+        from unittest.mock import patch, MagicMock
+        import pytest
+
+        mock_registry = MagicMock()
+        mock_registry.get_active.return_value = None  # key not found
+
+        with patch(
+            "praktor.core.prompt_registry.PromptRegistry",
+            return_value=mock_registry,
+        ):
+            with pytest.raises(ValueError, match="registry_key"):
+                AgentDefinition(
+                    name="bad_key",
+                    prompt_template="Write about {topic}",
+                    input_schema=_SimpleInput,
+                    registry_key="nonexistent_key",
+                )
+
+    def test_registry_key_no_error_when_key_found_in_registry(self):
+        """registry_key set to valid key (get_active returns a version) does not raise."""
+        from unittest.mock import patch, MagicMock
+
+        mock_registry = MagicMock()
+        mock_version = MagicMock()
+        mock_registry.get_active.return_value = mock_version  # key found
+
+        with patch(
+            "praktor.core.prompt_registry.PromptRegistry",
+            return_value=mock_registry,
+        ):
+            defn = AgentDefinition(
+                name="good_key",
+                prompt_template="Write about {topic}",
+                input_schema=_SimpleInput,
+                registry_key="judge_hedis",
+            )
+            assert defn.registry_key == "judge_hedis"

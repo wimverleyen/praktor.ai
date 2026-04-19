@@ -23,6 +23,9 @@ import statistics
 from dataclasses import dataclass
 from typing import Any
 
+from praktor.LLM.llm_interface import AsyncLLMAdapter
+from praktor.core.prompt_registry import PromptRegistry
+from praktor.monitoring import record_kpi
 from praktor.settings import create_log, MODEL
 
 log = create_log()
@@ -34,9 +37,9 @@ _CALIBRATION_THRESHOLD = 7.0
 # Number of golden samples to include as few-shot examples in the prompt
 _FEW_SHOT_COUNT = 3
 
-# Maps agent_type → PromptRegistry key. Single source of truth imported by
-# golden_dataset.py and production_eval.py — change here to change everywhere.
-_REGISTRY_KEYS: dict[str, str] = {
+# Private mapping — source of truth for registry key lookup.
+# Prefer reading from AgentDefinition.registry_key when available.
+_AGENT_TYPE_REGISTRY: dict[str, str] = {
     "hedis_gap":      "judge_hedis",
     "diabetes_hedis": "judge_diabetes_hedis",
 }
@@ -71,19 +74,24 @@ class CalibrationReport:
 
 
 async def _score_reference_outputs(judge, samples: list) -> list[Any]:
-    """Run judge on each sample's reference output. Returns list of score objects."""
-    scores = []
-    for sample in samples:
-        try:
-            score = await judge.evaluate(
-                recommendation=sample.reference_output,
-                member_context=sample.clinical_scenario,
-                outcome=sample.outcome,
-            )
-            scores.append(score)
-        except Exception as e:
-            log.warning(f"judge calibration: eval failed for {sample.sample_id}: {e}")
-    return scores
+    """Run judge on each sample's reference output concurrently. Returns list of score objects."""
+    from praktor.settings import PRAKTOR_JUDGE_CONCURRENCY
+    sem = asyncio.Semaphore(PRAKTOR_JUDGE_CONCURRENCY)
+
+    async def _eval_one(sample):
+        async with sem:
+            try:
+                return await judge.evaluate(
+                    recommendation=sample.reference_output,
+                    member_context=sample.clinical_scenario,
+                    outcome=sample.outcome,
+                )
+            except Exception as e:
+                log.warning(f"judge calibration: eval failed for {sample.sample_id}: {e}")
+                return None
+
+    results = await asyncio.gather(*(_eval_one(s) for s in samples))
+    return [r for r in results if r is not None]
 
 
 def _compute_criteria_means(scores: list, criteria_keys: list[str]) -> dict[str, float]:
@@ -94,7 +102,12 @@ def _compute_criteria_means(scores: list, criteria_keys: list[str]) -> dict[str,
     return means
 
 
-def create_calibrated_judge(judge_cls, agent_type: str, model: str | None = None):
+def create_calibrated_judge(
+    judge_cls,
+    agent_type: str,
+    model: str | None = None,
+    registry_key: str | None = None,
+):
     """
     Create a judge, loading the active calibrated prompt from PromptRegistry if available.
 
@@ -102,20 +115,21 @@ def create_calibrated_judge(judge_cls, agent_type: str, model: str | None = None
       - agent_type has no registry key mapping
       - no active version exists in the registry
       - the registry raises (missing config, schema change, permissions)
+
+    Prefer passing registry_key explicitly (from AgentDefinition.registry_key).
+    Falls back to the built-in agent_type → registry_key lookup.
     """
     from praktor.settings import MODEL
     effective_model = model or MODEL
     judge = judge_cls(model=effective_model)
 
-    registry_key = _REGISTRY_KEYS.get(agent_type)
-    if not registry_key:
+    resolved_key = registry_key or _AGENT_TYPE_REGISTRY.get(agent_type)
+    if not resolved_key:
         return judge
 
     try:
-        from praktor.core.prompt_registry import PromptRegistry
-        from praktor.LLM.llm_interface import AsyncLLMAdapter
         registry = PromptRegistry()
-        active = registry.get_active(registry_key)
+        active = registry.get_active(resolved_key)
         if active:
             judge._eval_adapter = AsyncLLMAdapter(
                 prompt_template=active.template,
@@ -124,11 +138,11 @@ def create_calibrated_judge(judge_cls, agent_type: str, model: str | None = None
             )
             log.info(
                 f"Loaded calibrated prompt {active.version_id[:8]} "
-                f"for {registry_key} (evals={active.eval_count}, score={active.avg_score})"
+                f"for {resolved_key} (evals={active.eval_count}, score={active.avg_score})"
             )
     except Exception as e:
         log.warning(
-            f"create_calibrated_judge: registry lookup failed for {registry_key}, "
+            f"create_calibrated_judge: registry lookup failed for {resolved_key}, "
             f"using default prompt: {e}"
         )
 
@@ -145,10 +159,9 @@ async def ensure_judges_calibrated(
     Called at the top of run_offline_eval() and run_demo() so the first eval
     run automatically calibrates rather than requiring a manual judge-optimize step.
     """
-    from praktor.core.prompt_registry import PromptRegistry
     registry = PromptRegistry()
-    types = [agent_type] if agent_type else list(_REGISTRY_KEYS.keys())
-    needs_cal = [t for t in types if registry.get_active(_REGISTRY_KEYS[t]) is None]
+    types = [agent_type] if agent_type else list(_AGENT_TYPE_REGISTRY.keys())
+    needs_cal = [t for t in types if registry.get_active(_AGENT_TYPE_REGISTRY[t]) is None]
 
     if not needs_cal:
         return
@@ -196,7 +209,6 @@ async def calibrate_judges(
     from praktor.clinical.evaluation.diabetes_hedis_judge import (
         DiabetesHEDISJudge, _DIABETES_EVAL_PROMPT,
     )
-    from praktor.core.prompt_registry import PromptRegistry
 
     registry = PromptRegistry()
     effective_model = model or MODEL
@@ -206,7 +218,7 @@ async def calibrate_judges(
         "hedis_gap": {
             "judge_cls": HEDISJudge,
             "base_prompt": _CLINICAL_EVAL_PROMPT,
-            "registry_key": _REGISTRY_KEYS["hedis_gap"],
+            "registry_key": "judge_hedis",
             "criteria": [
                 "accuracy", "completeness", "relevance", "conciseness", "clarity",
                 "gap_identification_accuracy", "action_appropriateness",
@@ -216,7 +228,7 @@ async def calibrate_judges(
         "diabetes_hedis": {
             "judge_cls": DiabetesHEDISJudge,
             "base_prompt": _DIABETES_EVAL_PROMPT,
-            "registry_key": _REGISTRY_KEYS["diabetes_hedis"],
+            "registry_key": "judge_diabetes_hedis",
             "criteria": [
                 "accuracy", "completeness", "relevance", "conciseness", "clarity",
                 "inertia_detection_accuracy", "escalation_ladder_correctness",
@@ -255,6 +267,9 @@ async def calibrate_judges(
             getattr(s, "overall", 5.0) for s in scores_before
         )
         needs_cal = overall_before < _CALIBRATION_THRESHOLD
+
+        record_kpi(f"judge.calibration.score_before.{atype}", overall_before)
+        record_kpi(f"judge.calibration.n_samples.{atype}", len(scores_before))
 
         if verbose:
             print(f"  Mean score on reference outputs: {overall_before:.2f}/10 "
@@ -296,7 +311,6 @@ async def calibrate_judges(
                 cal_judge = cfg["judge_cls"](model=effective_model)
                 # Temporarily patch the eval prompt
                 cal_judge._eval_adapter = None
-                from praktor.LLM.llm_interface import AsyncLLMAdapter
                 cal_judge._eval_adapter = AsyncLLMAdapter(
                     prompt_template=calibrated_prompt,
                     model=effective_model,
@@ -308,6 +322,11 @@ async def calibrate_judges(
                 if scores_after:
                     overall_after = statistics.mean(
                         getattr(s, "overall", 5.0) for s in scores_after
+                    )
+                    record_kpi(f"judge.calibration.score_after.{atype}", overall_after)
+                    record_kpi(
+                        f"judge.calibration.delta.{atype}",
+                        overall_after - overall_before,
                     )
                     if verbose:
                         print(f"  Verification score: {overall_after:.2f}/10 "
