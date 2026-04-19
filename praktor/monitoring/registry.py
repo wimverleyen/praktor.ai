@@ -142,14 +142,22 @@ class MetricsRegistry:
         self.cost_usd = _Counter()
         self.tool_calls = _Counter()
         self.cache_hits = _Counter()
+        self.react_steps = _Counter()          # per (agent, model)
+        self.governance_detections = _Counter()  # per (entity_type)
+        self.governance_violations = _Counter()  # per (action, entity_type)
 
         # Histograms
         self.duration_ms = _Histogram()
         self.judge_score = _Histogram(window=500)
+        self.react_step_count = _Histogram(window=500)  # steps-per-run distribution
 
         # Gauges (derived, updated after each run batch)
         self.cache_hit_ratio = _Gauge()
         self.judge_score_avg = _Gauge()
+        self.aigov_obligation = _Gauge()  # per (agent, obligation, enforcement_point) → 1/0.5/0/-1
+        self.hitl_pending = _Gauge()      # count of pending HITL reviews
+        self.hitl_approval_rate = _Gauge()  # fraction approved (0-1)
+        self.production_eval_score = _Gauge()  # latest score per agent_type
 
         # KPI: name → deque of (timestamp, value, tags)
         self._kpis: dict[str, deque] = defaultdict(lambda: deque(maxlen=500))
@@ -184,13 +192,19 @@ class MetricsRegistry:
         if all_runs > 0:
             self.cache_hit_ratio.set(cached_count / all_runs, {"agent": agent, "model": model})
 
-        # Record tool calls from trajectory
+        # Record tool calls and ReAct steps from trajectory
         if record.trajectory:
+            step_count = 0
             for step in record.trajectory:
                 if step.get("kind") == "tool_call":
                     tool = step.get("tool_name", "unknown")
                     tool_status = "error" if step.get("error") else "ok"
                     self.tool_calls.inc({"tool": tool, "agent": agent, "status": tool_status})
+                if step.get("kind") in ("tool_call", "llm_call"):
+                    step_count += 1
+            if step_count > 0:
+                self.react_steps.inc({"agent": agent, "model": model}, step_count)
+                self.react_step_count.observe(step_count, {"agent": agent, "model": model})
 
     def record_judge(self, agent: str, score: float, version_id: str | None = None) -> None:
         """Record a judge evaluation score."""
@@ -203,6 +217,30 @@ class MetricsRegistry:
         p50 = self.judge_score.quantile(0.5, {"agent": agent})
         if p50 is not None:
             self.judge_score_avg.set(p50, {"agent": agent})
+
+    _AIGOV_STATUS_NUMERIC = {"GREEN": 1.0, "PASS": 1.0, "AMBER": 0.5, "RED": 0.0, "FAIL": 0.0, "GREY": -1.0}
+
+    def record_aigov_obligation(
+        self,
+        agent: str,
+        obligation: str,
+        enforcement_point: str,
+        status: str,
+    ) -> None:
+        """Record AIGov obligation status as a gauge (GREEN=1, AMBER=0.5, RED=0, GREY=-1)."""
+        numeric = self._AIGOV_STATUS_NUMERIC.get(status.upper(), -1.0)
+        self.aigov_obligation.set(
+            numeric,
+            {"agent": agent, "obligation": obligation, "enforcement_point": enforcement_point},
+        )
+
+    def record_governance_detection(self, entity_type: str) -> None:
+        """Increment governance detection counter."""
+        self.governance_detections.inc({"entity_type": entity_type})
+
+    def record_governance_violation(self, action: str, entity_type: str) -> None:
+        """Increment governance violation counter."""
+        self.governance_violations.inc({"action": action, "entity_type": entity_type})
 
     def record_kpi(
         self,

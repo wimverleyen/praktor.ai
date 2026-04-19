@@ -723,6 +723,264 @@ def tab_aigov():
 
 
 # ---------------------------------------------------------------------------
+# Tab 5: Eval Monitor (offline + production + HITL)
+# ---------------------------------------------------------------------------
+
+@st.cache_data(ttl=30)
+def _query_judge_evals(hours: float = 168, agent: str | None = None) -> list[dict]:
+    db = _db_path()
+    if not Path(db).exists():
+        return []
+    since = time.time() - hours * 3600
+    conn = sqlite3.connect(db)
+    conn.row_factory = sqlite3.Row
+    try:
+        q = "SELECT * FROM judge_evals WHERE timestamp >= ?"
+        params: list = [since]
+        if agent:
+            q += " AND agent_type = ?"
+            params.append(agent)
+        q += " ORDER BY timestamp DESC LIMIT 200"
+        return [dict(r) for r in conn.execute(q, params).fetchall()]
+    except Exception:
+        return []
+    finally:
+        conn.close()
+
+
+@st.cache_data(ttl=30)
+def _query_hitl_queue(limit: int = 50) -> list[dict]:
+    db = _db_path()
+    if not Path(db).exists():
+        return []
+    conn = sqlite3.connect(db)
+    conn.row_factory = sqlite3.Row
+    try:
+        return [dict(r) for r in conn.execute(
+            "SELECT * FROM hitl_reviews ORDER BY created_at DESC LIMIT ?", (limit,)
+        ).fetchall()]
+    except Exception:
+        return []
+    finally:
+        conn.close()
+
+
+def _update_hitl_review(session_id: str, action: str, notes: str, modified_output: str) -> bool:
+    db = _db_path()
+    if not Path(db).exists():
+        return False
+    conn = sqlite3.connect(db)
+    try:
+        conn.execute(
+            "UPDATE hitl_reviews SET action=?, reviewer_notes=?, modified_output=?, reviewed_at=? "
+            "WHERE session_id=?",
+            (action, notes, modified_output or None, time.time(), session_id),
+        )
+        conn.commit()
+        return True
+    except Exception:
+        return False
+    finally:
+        conn.close()
+
+
+def tab_eval_monitor():
+    st.subheader("Eval Monitor")
+    st.caption(
+        "Unified view of offline evaluation results, production AI-judge scores, "
+        "and the HITL (Human-in-the-Loop) review queue."
+    )
+
+    subtab_offline, subtab_prod, subtab_hitl = st.tabs(
+        ["📐 Offline Eval", "🏭 Production Eval", "👤 HITL Review"]
+    )
+
+    # ── Offline Eval ─────────────────────────────────────────────────────────
+    with subtab_offline:
+        st.markdown("**Offline evaluation results from the 20-sample golden dataset.**")
+
+        col1, col2 = st.columns([2, 1])
+        with col1:
+            hours_off = st.selectbox("Time window", [24, 72, 168, 720], index=2,
+                                     format_func=lambda h: f"Last {h}h", key="off_hours")
+        with col2:
+            if st.button("Run Offline Eval", key="run_offline_eval",
+                         help="python -m praktor eval"):
+                st.info("Run in terminal: `python -m praktor eval --detail`")
+
+        evals = _query_judge_evals(hours=float(hours_off))
+        offline = [e for e in evals if e.get("question", "").startswith("golden:")]
+
+        if not offline:
+            st.info(
+                "No offline eval results found. Run: `python -m praktor eval`\n\n"
+                "Or in dry-run mode: `python -m praktor eval --dry-run`"
+            )
+        else:
+            # Summary metrics
+            scores = [e["score"] for e in offline if e.get("score") is not None]
+            acc = [e["accuracy"] for e in offline if e.get("accuracy") is not None]
+            comp = [e["completeness"] for e in offline if e.get("completeness") is not None]
+            rel = [e["relevance"] for e in offline if e.get("relevance") is not None]
+            clar = [e["clarity"] for e in offline if e.get("clarity") is not None]
+
+            m1, m2, m3, m4, m5 = st.columns(5)
+            m1.metric("Samples", len(offline))
+            m2.metric("Overall", f"{sum(scores)/len(scores):.2f}/10" if scores else "—")
+            m3.metric("Accuracy", f"{sum(acc)/len(acc):.1f}" if acc else "—")
+            m4.metric("Completeness", f"{sum(comp)/len(comp):.1f}" if comp else "—")
+            m5.metric("Clarity", f"{sum(clar)/len(clar):.1f}" if clar else "—")
+
+            st.divider()
+            import pandas as pd
+            df = pd.DataFrame(offline)[
+                ["session_id", "agent_type", "score", "accuracy", "completeness",
+                 "relevance", "clarity", "reasoning", "timestamp"]
+            ].copy()
+            df["timestamp"] = df["timestamp"].apply(
+                lambda t: datetime.fromtimestamp(t).strftime("%m-%d %H:%M") if t else ""
+            )
+            df["session_id"] = df["session_id"].str[:14]
+            st.dataframe(df, use_container_width=True, hide_index=True)
+
+    # ── Production Eval ────────────────────────────────────────────────────────
+    with subtab_prod:
+        st.markdown("**AI-judge scores on production and demo runs.**")
+
+        col1, col2 = st.columns([2, 1])
+        with col1:
+            hours_prod = st.selectbox("Time window", [24, 72, 168], index=0,
+                                      format_func=lambda h: f"Last {h}h", key="prod_hours")
+        with col2:
+            if st.button("Run Demo", key="run_demo_btn",
+                         help="Seeds + runs all 10 demo cases"):
+                st.info("Run in terminal: `python -m praktor demo`")
+
+        evals = _query_judge_evals(hours=float(hours_prod))
+        prod = [e for e in evals if not e.get("question", "").startswith("golden:")]
+
+        if not prod:
+            st.info(
+                "No production eval results. Run: `python -m praktor demo`\n\n"
+                "Or: `python -m praktor eval --production`"
+            )
+        else:
+            scores = [e["score"] for e in prod if e.get("score") is not None]
+            by_agent: dict[str, list] = {}
+            for e in prod:
+                by_agent.setdefault(e["agent_type"], []).append(e.get("score", 0))
+
+            m1, m2 = st.columns(2)
+            m1.metric("Judged runs", len(prod))
+            m2.metric("Overall avg", f"{sum(scores)/len(scores):.2f}/10" if scores else "—")
+
+            for agent, agent_scores in sorted(by_agent.items()):
+                avg = sum(agent_scores) / len(agent_scores)
+                st.metric(agent.replace("_", " ").title(), f"{avg:.2f}/10",
+                          help=f"{len(agent_scores)} runs")
+
+            st.divider()
+            import pandas as pd
+            df = pd.DataFrame(prod)[
+                ["session_id", "agent_type", "score", "accuracy", "completeness",
+                 "relevance", "reasoning", "timestamp"]
+            ].copy()
+            df["timestamp"] = df["timestamp"].apply(
+                lambda t: datetime.fromtimestamp(t).strftime("%m-%d %H:%M") if t else ""
+            )
+            df["session_id"] = df["session_id"].str[:16]
+            st.dataframe(df, use_container_width=True, hide_index=True)
+
+    # ── HITL Review Queue ──────────────────────────────────────────────────────
+    with subtab_hitl:
+        st.markdown("**Human-in-the-Loop review queue — approve, reject, or modify agent outputs.**")
+
+        if st.button("Refresh queue", key="refresh_hitl"):
+            st.cache_data.clear()
+            st.rerun()
+
+        reviews = _query_hitl_queue(limit=50)
+        if not reviews:
+            st.info(
+                "No reviews in queue. Run demo cases to populate: `python -m praktor demo`"
+            )
+        else:
+            pending = [r for r in reviews if r.get("action") == "pending"]
+            done = [r for r in reviews if r.get("action") != "pending"]
+
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Pending", len(pending))
+            approved = sum(1 for r in done if r.get("action") == "approved")
+            m2.metric("Approved", approved)
+            rejected = sum(1 for r in done if r.get("action") == "rejected")
+            m3.metric("Rejected", rejected)
+
+            if pending:
+                st.divider()
+                st.markdown("**Pending reviews:**")
+                for r in pending:
+                    sid = r["session_id"]
+                    agent = r.get("agent_type", "unknown")
+                    score = r.get("judge_score_pre")
+                    score_str = f" · Judge score: {score:.1f}/10" if score else ""
+                    created = r.get("created_at", "")
+                    if created:
+                        try:
+                            created = datetime.fromtimestamp(float(created)).strftime("%m-%d %H:%M")
+                        except Exception:
+                            pass
+
+                    with st.expander(
+                        f"🟡 `{sid[:16]}` · {agent}{score_str} · {created}",
+                        expanded=False,
+                    ):
+                        output = r.get("original_output", "")
+                        st.markdown("**Agent output:**")
+                        st.text_area("Output", value=output, height=200, disabled=True,
+                                     key=f"hitl_out_{sid}")
+
+                        with st.form(key=f"hitl_form_{sid}"):
+                            action = st.radio(
+                                "Decision",
+                                ["approved", "rejected", "modified"],
+                                horizontal=True,
+                                key=f"hitl_action_{sid}",
+                            )
+                            modified = st.text_area(
+                                "Modified output (only if action=modified)",
+                                value="", height=100,
+                                key=f"hitl_modified_{sid}",
+                            )
+                            notes = st.text_input(
+                                "Reviewer notes", value="",
+                                key=f"hitl_notes_{sid}",
+                            )
+                            if st.form_submit_button("Submit review", type="primary"):
+                                ok = _update_hitl_review(sid, action, notes, modified)
+                                if ok:
+                                    st.success(f"Review submitted: {action}")
+                                    st.cache_data.clear()
+                                    st.rerun()
+                                else:
+                                    st.error("Failed to save review.")
+
+            if done:
+                st.divider()
+                st.markdown("**Completed reviews:**")
+                import pandas as pd
+                df = pd.DataFrame(done)[
+                    ["session_id", "agent_type", "action", "judge_score_pre",
+                     "reviewer_notes", "reviewed_at"]
+                ].copy()
+                df["session_id"] = df["session_id"].str[:16]
+                df["reviewed_at"] = df["reviewed_at"].apply(
+                    lambda t: datetime.fromtimestamp(float(t)).strftime("%m-%d %H:%M")
+                    if t else ""
+                )
+                st.dataframe(df, use_container_width=True, hide_index=True)
+
+
+# ---------------------------------------------------------------------------
 # Sidebar — live summary
 # ---------------------------------------------------------------------------
 
@@ -767,7 +1025,9 @@ def main():
     st.title("⚡ praktor.ai")
     st.caption("General-purpose agentic framework · ReAct · OTel · Prometheus · Grafana")
 
-    tab1, tab2, tab3, tab4 = st.tabs(["📡 Span Tracer", "🤖 Skills", "🏥 Clinical Data", "🛡️ AIGov"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "📡 Span Tracer", "🤖 Skills", "🏥 Clinical Data", "🛡️ AIGov", "📊 Eval Monitor",
+    ])
 
     with tab1:
         tab_tracer()
@@ -780,6 +1040,9 @@ def main():
 
     with tab4:
         tab_aigov()
+
+    with tab5:
+        tab_eval_monitor()
 
 
 if __name__ == "__main__":

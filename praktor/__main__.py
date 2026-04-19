@@ -31,6 +31,14 @@ def cmd_receive(args):
         from praktor.monitoring import configure
         configure(prometheus_port=prom_port)
 
+    # Start background production eval scheduler (judges new runs every 15min)
+    try:
+        from praktor.clinical.evaluation.production_eval import ProductionEvalScheduler
+        scheduler = ProductionEvalScheduler(interval_minutes=15, limit_per_run=10)
+        scheduler.start()
+    except Exception:
+        pass
+
     init_tracer_provider()
     router = get_global_router()
     asyncio.run(run_consumer(router))
@@ -303,6 +311,91 @@ def cmd_prompt(args):
         asyncio.run(_run())
 
 
+def cmd_eval(args):
+    """
+    Run offline or production evaluation.
+
+    Usage:
+        python -m praktor eval                      # offline: all 20 golden samples
+        python -m praktor eval --agent hedis_gap    # offline: 10 HEDIS samples
+        python -m praktor eval --production         # judge recent production runs
+        python -m praktor eval --dry-run            # offline: judge reference outputs only (fast)
+    """
+    import asyncio
+
+    if getattr(args, "production", False):
+        from praktor.clinical.evaluation.production_eval import run_production_eval
+
+        async def _run_prod():
+            n = await run_production_eval(
+                agent_type=getattr(args, "agent", None) or None,
+                hours=getattr(args, "hours", 24),
+                limit=getattr(args, "limit", 20),
+                verbose=True,
+            )
+            print(f"\nProduction eval complete: {n} run(s) judged.")
+
+        asyncio.run(_run_prod())
+    else:
+        from praktor.clinical.evaluation.offline_eval import run_offline_eval, print_per_sample_detail
+
+        async def _run():
+            reports = await run_offline_eval(
+                agent_type=getattr(args, "agent", None) or None,
+                concurrency=getattr(args, "concurrency", 2),
+                verbose=True,
+                dry_run=getattr(args, "dry_run", False),
+            )
+            if getattr(args, "detail", False):
+                for report in reports:
+                    print_per_sample_detail(report)
+
+        asyncio.run(_run())
+
+
+def cmd_demo(args):
+    """
+    Seed and run all 10 synthetic demo cases, then AI-judge each output.
+
+    Usage:
+        python -m praktor demo
+        python -m praktor demo --seed-only
+        python -m praktor demo --concurrency 3
+    """
+    import asyncio
+    from praktor.clinical.evaluation.production_eval import run_demo
+    from praktor.clinical.evaluation.demo_cases import seed_demo_members
+
+    if getattr(args, "seed_only", False):
+        seed_demo_members()
+        print("Demo members seeded (10 cases). Run without --seed-only to execute agents.")
+        return
+
+    asyncio.run(run_demo(
+        concurrency=getattr(args, "concurrency", 2),
+        verbose=True,
+        skip_production_eval=getattr(args, "skip_production_eval", False),
+    ))
+
+
+def cmd_judge_optimize(args):
+    """
+    Calibrate AI judges using the golden dataset.
+
+    Usage:
+        python -m praktor judge-optimize
+        python -m praktor judge-optimize --agent hedis_gap
+    """
+    import asyncio
+    from praktor.clinical.evaluation.judge_optimizer import calibrate_judges
+
+    asyncio.run(calibrate_judges(
+        agent_type=getattr(args, "agent", None) or None,
+        model=getattr(args, "model", None) or None,
+        verbose=True,
+    ))
+
+
 def cmd_aigov(args):
     """
     AIGov obligation commands.
@@ -553,6 +646,41 @@ def main():
     po.add_argument("--goal", "-g", default="", help="Optimization goal description")
     po.add_argument("--model", "-m", default="qwen2.5", help="LLM model for optimization")
 
+    # --- eval ---
+    ev = sub.add_parser("eval", help="Run offline or production evaluation")
+    ev.add_argument("--agent", "-a",
+                    choices=["hedis_gap", "diabetes_hedis"],
+                    default=None, help="Filter to one agent type (default: both)")
+    ev.add_argument("--concurrency", "-c", type=int, default=2,
+                    help="Max parallel agent runs for offline eval (default: 2)")
+    ev.add_argument("--detail", action="store_true",
+                    help="Print per-sample score table after summary")
+    ev.add_argument("--dry-run", action="store_true", dest="dry_run",
+                    help="Judge reference outputs only — skip agent LLM calls (fast CI mode)")
+    ev.add_argument("--production", action="store_true",
+                    help="Judge recent unjudged production runs instead of golden dataset")
+    ev.add_argument("--hours", type=float, default=24,
+                    help="For --production: look back this many hours (default: 24)")
+    ev.add_argument("--limit", type=int, default=20,
+                    help="For --production: max runs to judge (default: 20)")
+
+    # --- demo ---
+    dm = sub.add_parser("demo", help="Seed + run 10 synthetic demo cases and AI-judge outputs")
+    dm.add_argument("--seed-only", action="store_true", dest="seed_only",
+                    help="Only seed demo members, do not run agents")
+    dm.add_argument("--concurrency", "-c", type=int, default=2,
+                    help="Max parallel agent runs (default: 2)")
+    dm.add_argument("--skip-production-eval", action="store_true", dest="skip_production_eval",
+                    help="Skip final production eval pass after demo runs")
+
+    # --- judge-optimize ---
+    jo = sub.add_parser("judge-optimize", help="Calibrate AI judges using the golden dataset")
+    jo.add_argument("--agent", "-a",
+                    choices=["hedis_gap", "diabetes_hedis"],
+                    default=None, help="Calibrate only this judge (default: both)")
+    jo.add_argument("--model", "-m", default=None,
+                    help="Override LLM model for judge (default: from settings)")
+
     # --- aigov ---
     aig = sub.add_parser("aigov", help="AIGov obligation checks, scoreboard, and attestation")
     aig_sub = aig.add_subparsers(dest="aigov_cmd", required=True)
@@ -588,6 +716,9 @@ def main():
         "publish":  cmd_publish,
         "list":     cmd_list,
         "agent":    cmd_agent,
+        "eval":             cmd_eval,
+        "demo":             cmd_demo,
+        "judge-optimize":   cmd_judge_optimize,
         "monitor":          cmd_monitor,
         "demo-governance":  cmd_demo_governance,
         "prompt":           cmd_prompt,

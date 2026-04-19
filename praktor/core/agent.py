@@ -548,6 +548,22 @@ class Agent:
             except Exception as exc:
                 log.warning(f"AIGov ledger write failed: {exc}")
 
+            # Push obligation results to Prometheus gauge
+            try:
+                from praktor.monitoring.governance import record_aigov_result
+                for ev in events:
+                    predicate = getattr(ev, "predicate_result", None)
+                    status = "GREEN" if str(predicate) == "PASS" else "RED"
+                    ep = getattr(ev, "enforcement_point", None)
+                    record_aigov_result(
+                        agent=getattr(ev, "agent_id", self._definition.name),
+                        obligation=getattr(ev, "obligation_id", "unknown"),
+                        enforcement_point=ep.value if hasattr(ep, "value") else str(ep),
+                        status=status,
+                    )
+            except Exception as exc:
+                log.debug(f"AIGov Prometheus push failed (non-fatal): {exc}")
+
     def _monitoring_hook(
         self, span: Span, token_count: int, passes: int, error: str | None = None
     ) -> None:

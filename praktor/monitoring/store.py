@@ -109,6 +109,23 @@ CREATE TABLE IF NOT EXISTS kpi_events (
     timestamp   REAL    NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS hitl_reviews (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id      TEXT NOT NULL,
+    agent_type      TEXT NOT NULL,
+    original_output TEXT,
+    modified_output TEXT,
+    action          TEXT DEFAULT 'pending',
+    reviewer_notes  TEXT,
+    reviewed_at     REAL,
+    created_at      REAL,
+    judge_score_pre  REAL,
+    judge_score_post REAL
+);
+
+CREATE INDEX IF NOT EXISTS idx_hitl_session ON hitl_reviews(session_id);
+CREATE INDEX IF NOT EXISTS idx_hitl_action  ON hitl_reviews(action);
+
 CREATE INDEX IF NOT EXISTS idx_runs_agent     ON agent_runs(agent_type);
 CREATE INDEX IF NOT EXISTS idx_runs_ts        ON agent_runs(timestamp);
 CREATE INDEX IF NOT EXISTS idx_runs_session   ON agent_runs(session_id);
@@ -183,6 +200,20 @@ class KPIRecord:
     value: float
     timestamp: float
     tags: dict[str, str] | None = None
+
+
+@dataclass
+class HITLReviewRecord:
+    session_id: str
+    agent_type: str
+    original_output: str
+    action: str = "pending"          # pending / approved / rejected / modified
+    modified_output: str | None = None
+    reviewer_notes: str | None = None
+    reviewed_at: float | None = None
+    created_at: float | None = None
+    judge_score_pre: float | None = None
+    judge_score_post: float | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -480,3 +511,159 @@ class MonitoringStore:
                     pass
             result.append(d)
         return result
+
+    # ------------------------------------------------------------------
+    # HITL reviews
+    # ------------------------------------------------------------------
+
+    async def insert_hitl_review(self, record: "HITLReviewRecord") -> int:
+        return await asyncio.to_thread(self._insert_hitl_sync, record)
+
+    def _insert_hitl_sync(self, record: "HITLReviewRecord") -> int:
+        import time as _time
+        with self._connect() as conn:
+            cur = conn.execute(
+                """INSERT OR IGNORE INTO hitl_reviews
+                   (session_id, agent_type, original_output, action,
+                    modified_output, reviewer_notes, reviewed_at, created_at,
+                    judge_score_pre, judge_score_post)
+                   VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    record.session_id, record.agent_type, record.original_output,
+                    record.action, record.modified_output, record.reviewer_notes,
+                    record.reviewed_at, record.created_at or _time.time(),
+                    record.judge_score_pre, record.judge_score_post,
+                ),
+            )
+            return cur.lastrowid or 0
+
+    async def update_hitl_review(
+        self, session_id: str, action: str,
+        notes: str = "", modified_output: str | None = None,
+        judge_score_post: float | None = None,
+    ) -> None:
+        import time as _time
+        await asyncio.to_thread(
+            self._update_hitl_sync, session_id, action, notes,
+            modified_output, judge_score_post, _time.time(),
+        )
+
+    def _update_hitl_sync(
+        self, session_id: str, action: str, notes: str,
+        modified_output: str | None, judge_score_post: float | None, reviewed_at: float,
+    ) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """UPDATE hitl_reviews
+                   SET action=?, reviewer_notes=?, modified_output=?,
+                       judge_score_post=?, reviewed_at=?
+                   WHERE session_id=?""",
+                (action, notes, modified_output, judge_score_post, reviewed_at, session_id),
+            )
+
+    async def query_hitl_queue(self, action: str | None = None, limit: int = 50) -> list[dict]:
+        return await asyncio.to_thread(self._query_hitl_sync, action, limit)
+
+    def _query_hitl_sync(self, action: str | None, limit: int) -> list[dict]:
+        if action:
+            with self._connect() as conn:
+                rows = conn.execute(
+                    "SELECT * FROM hitl_reviews WHERE action=? ORDER BY created_at DESC LIMIT ?",
+                    (action, limit),
+                ).fetchall()
+        else:
+            with self._connect() as conn:
+                rows = conn.execute(
+                    "SELECT * FROM hitl_reviews ORDER BY created_at DESC LIMIT ?",
+                    (limit,),
+                ).fetchall()
+        return [dict(r) for r in rows]
+
+    async def hitl_stats(self) -> dict:
+        return await asyncio.to_thread(self._hitl_stats_sync)
+
+    def _hitl_stats_sync(self) -> dict:
+        with self._connect() as conn:
+            total = conn.execute("SELECT COUNT(*) FROM hitl_reviews").fetchone()[0]
+            pending = conn.execute(
+                "SELECT COUNT(*) FROM hitl_reviews WHERE action='pending'"
+            ).fetchone()[0]
+            approved = conn.execute(
+                "SELECT COUNT(*) FROM hitl_reviews WHERE action='approved'"
+            ).fetchone()[0]
+            rejected = conn.execute(
+                "SELECT COUNT(*) FROM hitl_reviews WHERE action='rejected'"
+            ).fetchone()[0]
+            modified = conn.execute(
+                "SELECT COUNT(*) FROM hitl_reviews WHERE action='modified'"
+            ).fetchone()[0]
+            avg_pre = conn.execute(
+                "SELECT AVG(judge_score_pre) FROM hitl_reviews WHERE judge_score_pre IS NOT NULL"
+            ).fetchone()[0]
+            avg_post = conn.execute(
+                "SELECT AVG(judge_score_post) FROM hitl_reviews WHERE judge_score_post IS NOT NULL"
+            ).fetchone()[0]
+        reviewed = total - pending
+        return {
+            "total": total, "pending": pending, "approved": approved,
+            "rejected": rejected, "modified": modified,
+            "approval_rate": approved / reviewed if reviewed > 0 else 0.0,
+            "modification_rate": modified / reviewed if reviewed > 0 else 0.0,
+            "avg_judge_score_pre": avg_pre or 0.0,
+            "avg_judge_score_post": avg_post or 0.0,
+        }
+
+    # ------------------------------------------------------------------
+    # Production eval: query runs without judge evaluations
+    # ------------------------------------------------------------------
+
+    async def query_unjudged_runs(
+        self, agent_type: str | None = None, hours: float = 24, limit: int = 20
+    ) -> list[dict]:
+        """Return recent runs that have no corresponding judge_eval row."""
+        return await asyncio.to_thread(self._query_unjudged_sync, agent_type, hours, limit)
+
+    def _query_unjudged_sync(
+        self, agent_type: str | None, hours: float, limit: int
+    ) -> list[dict]:
+        import time as _time
+        since = _time.time() - hours * 3600
+        agent_clause = "AND r.agent_type = ?" if agent_type else ""
+        params = [since] + ([agent_type] if agent_type else []) + [limit]
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""SELECT r.* FROM agent_runs r
+                    LEFT JOIN judge_evals j ON j.session_id = r.session_id
+                    WHERE r.timestamp >= ? AND r.status = 'ok'
+                    {agent_clause}
+                    AND j.id IS NULL
+                    ORDER BY r.timestamp DESC LIMIT ?""",
+                params,
+            ).fetchall()
+        result = []
+        for row in rows:
+            d = dict(row)
+            if d.get("trajectory"):
+                try:
+                    d["trajectory"] = json.loads(d["trajectory"])
+                except Exception:
+                    pass
+            result.append(d)
+        return result
+
+    def _query_kpis_latest_sync(self) -> dict[str, float]:
+        """
+        Return the most recent value for each KPI name from SQLite.
+
+        Used by the Prometheus sync loop so that KPIs written by separate
+        processes (e.g. `python -m praktor eval`) are visible on the
+        consumer's Prometheus endpoint — both share the same SQLite file.
+        """
+        with self._connect() as conn:
+            rows = conn.execute(
+                """SELECT name, value FROM kpi_events
+                   WHERE id IN (
+                       SELECT MAX(id) FROM kpi_events GROUP BY name
+                   )"""
+            ).fetchall()
+        return {r["name"]: r["value"] for r in rows}
