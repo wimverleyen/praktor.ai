@@ -21,7 +21,15 @@ class LLMFactory(ABC):
     def __init__(self):
         pass
 
+    _CLAUDE_SHORTHANDS = {"opus", "sonnet", "haiku"}
+
     def create_llm(self, llm_type: str):
+        # Normalize shorthands like "sonnet-4.6" → "claude-sonnet-4-6"
+        if not llm_type.startswith("claude-"):
+            prefix = llm_type.split("-")[0]
+            if prefix in self._CLAUDE_SHORTHANDS:
+                llm_type = "claude-" + llm_type.replace(".", "-")
+
         if llm_type.startswith("claude-"):
             return self._create_anthropic(llm_type)
         elif llm_type.startswith("gpt-"):

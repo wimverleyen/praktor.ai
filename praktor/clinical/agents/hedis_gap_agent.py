@@ -31,9 +31,13 @@ from __future__ import annotations
 
 import json
 import re
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from praktor.core.agent_definition import AgentDefinition, MemoryPolicy
+from praktor.aigov.bundle import healthcare_bundle
+from praktor.clinical.schemas import hash_member_id
+
+_DEMO_MEMBER_HASH = hash_member_id("DEMO-001")
 
 # Register all clinical tools at import time
 import praktor.clinical.tools.claims_lookup       # noqa: F401
@@ -51,7 +55,7 @@ import praktor.clinical.tools.drug_adherence      # noqa: F401
 
 class HEDISGapInput(BaseModel):
     agent_type: str = "hedis_gap"
-    member_id_hash: str
+    member_id_hash: str = Field(default_factory=lambda: _DEMO_MEMBER_HASH, description="Demo: DEMO-001")
     measurement_year: int = 2024
     session_id: str = ""
     history: str = ""
@@ -109,7 +113,6 @@ HEDISGapDefinition = AgentDefinition(
     name="hedis_gap",
     prompt_template=_GAP_AGENT_PROMPT,
     input_schema=HEDISGapInput,
-    llm_model="llama3:8b",      # override with claude-sonnet-4-6 for production
     temperature=0.0,
     tools=[
         "gap_registry",
@@ -122,6 +125,7 @@ HEDISGapDefinition = AgentDefinition(
     ],
     max_steps=7,
     memory_policy=MemoryPolicy.NONE,
+    obligation_bundle=healthcare_bundle(),
 )
 
 

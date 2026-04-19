@@ -4,7 +4,7 @@ praktor.ai — Streamlit demo UI
 Three tabs:
   1. Span Tracer  — waterfall view of agent runs + trajectory steps from SQLite
   2. Skills       — browse and run any registered AgentDefinition
-  3. Documents    — upload PDFs → build/update FAISS vector store
+  3. Clinical Data — browse members, HEDIS gaps, claims, labs, outreach from the clinical store
 
 Run:
     cd praktor.ai
@@ -17,7 +17,6 @@ import asyncio
 import os
 import sqlite3
 import sys
-import tempfile
 import time
 from datetime import datetime
 from pathlib import Path
@@ -174,7 +173,7 @@ def tab_tracer():
     with col_f3:
         limit = st.number_input("Max rows", min_value=10, max_value=500, value=100, step=10)
 
-    if st.button("Refresh", use_container_width=True):
+    if st.button("Refresh", use_container_width=True, key="refresh_span_tracer"):
         st.cache_data.clear()
 
     runs = _query_runs(float(hours), agent_filter, int(limit))
@@ -275,10 +274,18 @@ def _get_all_definitions():
 
 def _field_input(field_name: str, field_info, key_prefix: str) -> Any:
     """Render a Streamlit widget for one Pydantic field and return its value."""
+    from pydantic_core import PydanticUndefined
     annotation = field_info.annotation
-    default = field_info.default if field_info.default is not None else ""
+    raw_default = field_info.default
+    if raw_default is PydanticUndefined or raw_default is None:
+        if field_info.default_factory is not None:
+            raw_default = field_info.default_factory()
+        else:
+            raw_default = ""
+    default = raw_default
     title = field_name.replace("_", " ").title()
     key = f"{key_prefix}_{field_name}"
+    help_text = field_info.description or None
 
     # Skip internal fields
     if field_name in ("agent_type", "session_id", "history"):
@@ -287,14 +294,14 @@ def _field_input(field_name: str, field_info, key_prefix: str) -> Any:
     # Choose widget by annotation
     if annotation in (str, str | None):
         if field_name in ("job_description", "prompt_template", "topic", "question", "message", "notes"):
-            return st.text_area(title, value=str(default) if default else "", key=key, height=120)
-        return st.text_input(title, value=str(default) if default else "", key=key)
+            return st.text_area(title, value=str(default) if default else "", key=key, height=120, help=help_text)
+        return st.text_input(title, value=str(default) if default else "", key=key, help=help_text)
     if annotation in (int, float):
-        return st.number_input(title, value=default or 0, key=key)
+        return st.number_input(title, value=default or 0, key=key, help=help_text)
     if annotation == bool:
-        return st.checkbox(title, value=bool(default), key=key)
+        return st.checkbox(title, value=bool(default), key=key, help=help_text)
     # Fallback
-    return st.text_input(title, value=str(default) if default else "", key=key)
+    return st.text_input(title, value=str(default) if default else "", key=key, help=help_text)
 
 
 def tab_skills():
@@ -391,114 +398,188 @@ def _run_agent(defn, payload: dict):
 
 
 # ---------------------------------------------------------------------------
-# Tab 3: Documents (FAISS ingestion)
+# Tab 3: Clinical Data Browser
 # ---------------------------------------------------------------------------
 
-def tab_documents():
-    st.subheader("Documents")
-    st.caption("Upload PDF files to build or update the FAISS vector store used by the `job_interview` agent.")
-
-    vector_db_path = st.text_input(
-        "FAISS store path",
-        value=os.getenv("VECTOR_DB", str(Path.home() / ".praktor" / "vector_db")),
-        help="Directory where the FAISS index will be saved.",
-    )
-
-    model = st.text_input(
-        "Embedding model (Ollama)",
-        value=os.getenv("PRAKTOR_MODEL", "qwen2.5"),
-        help="Ollama model used to generate embeddings.",
-    )
-
-    uploaded = st.file_uploader(
-        "Upload PDF files",
-        type=["pdf"],
-        accept_multiple_files=True,
-    )
-
-    if uploaded:
-        st.markdown(f"**{len(uploaded)} file(s) selected:**")
-        for f in uploaded:
-            st.markdown(f"- {f.name} ({f.size / 1024:.1f} KB)")
-
-    if not uploaded:
-        st.info("Upload one or more PDF files to begin ingestion.")
-        return
-
-    col_build, col_info = st.columns([1, 2])
-    with col_build:
-        build_btn = st.button("Build vector store", type="primary", use_container_width=True)
-
-    with col_info:
-        if Path(vector_db_path).exists():
-            st.success(f"Existing store found at `{vector_db_path}` — will be overwritten.")
-        else:
-            st.info(f"New store will be created at `{vector_db_path}`.")
-
-    if not build_btn:
-        return
-
-    progress = st.progress(0, text="Saving uploaded files…")
-    log_area = st.empty()
-    logs: list[str] = []
-
-    def _log(msg: str):
-        logs.append(msg)
-        log_area.code("\n".join(logs[-30:]))
-
+@st.cache_data(ttl=30)
+def _clinical_summary() -> dict:
+    """Row counts per table in the clinical SQLite store."""
+    import sqlite3
+    db = os.getenv("PRAKTOR_CLINICAL_DB", str(Path.home() / ".praktor" / "clinical_data.db"))
+    if not Path(db).exists():
+        return {}
     try:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            _log(f"Saving {len(uploaded)} file(s) to temp directory…")
-            for i, f in enumerate(uploaded):
-                dest = Path(tmpdir) / f.name
-                dest.write_bytes(f.read())
-                _log(f"  ✓ {f.name}")
-                progress.progress((i + 1) / (len(uploaded) + 3), text=f"Saved {f.name}")
+        con = sqlite3.connect(db)
+        tables = ["members", "hedis_gaps", "claims", "labs", "vitals", "pdc_scores", "outreach_history"]
+        return {t: con.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0] for t in tables}
+    except Exception:
+        return {}
+    finally:
+        con.close()
 
-            progress.progress(0.5, text="Loading PDFs…")
-            from langchain_community.document_loaders import PyPDFLoader
-            from langchain.text_splitter import RecursiveCharacterTextSplitter
-            from langchain_community.embeddings import OllamaEmbeddings
-            from langchain_community.vectorstores import FAISS
 
-            documents = []
-            for pdf_path in Path(tmpdir).glob("*.pdf"):
-                _log(f"Loading {pdf_path.name}…")
-                loader = PyPDFLoader(str(pdf_path))
-                pages = loader.load()
-                documents.extend(pages)
-                _log(f"  → {len(pages)} page(s)")
+@st.cache_data(ttl=30)
+def _clinical_members() -> list[dict]:
+    import sqlite3
+    db = os.getenv("PRAKTOR_CLINICAL_DB", str(Path.home() / ".praktor" / "clinical_data.db"))
+    if not Path(db).exists():
+        return []
+    con = sqlite3.connect(db)
+    con.row_factory = sqlite3.Row
+    rows = con.execute("SELECT * FROM members ORDER BY plan_id").fetchall()
+    con.close()
+    return [dict(r) for r in rows]
 
-            _log(f"Total: {len(documents)} pages")
-            progress.progress(0.6, text="Splitting into chunks…")
 
-            splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150)
-            chunks = splitter.split_documents(documents)
-            _log(f"Split into {len(chunks)} chunks")
+@st.cache_data(ttl=30)
+def _clinical_member_detail(member_id_hash: str) -> dict:
+    import sqlite3, json as _json
+    db = os.getenv("PRAKTOR_CLINICAL_DB", str(Path.home() / ".praktor" / "clinical_data.db"))
+    con = sqlite3.connect(db)
+    con.row_factory = sqlite3.Row
 
-            progress.progress(0.7, text=f"Embedding with '{model}'…")
-            _log(f"Embedding with model '{model}' — this may take a while…")
-            embeddings = OllamaEmbeddings(model=model)
+    gaps = [dict(r) for r in con.execute(
+        "SELECT measure_id, measure_name, stars_weight, status, days_remaining, pdc_current "
+        "FROM hedis_gaps WHERE member_id_hash = ? ORDER BY stars_weight DESC",
+        (member_id_hash,),
+    ).fetchall()]
 
-            vector_store = FAISS.from_documents(chunks, embeddings)
-            _log("Embedding complete.")
+    claims = [dict(r) for r in con.execute(
+        "SELECT service_date, drug_name, drug_class, claim_type, days_supply "
+        "FROM claims WHERE member_id_hash = ? ORDER BY service_date DESC LIMIT 10",
+        (member_id_hash,),
+    ).fetchall()]
 
-            progress.progress(0.9, text="Saving FAISS index…")
-            Path(vector_db_path).mkdir(parents=True, exist_ok=True)
-            vector_store.save_local(vector_db_path)
-            _log(f"Vector store saved to: {vector_db_path}")
+    labs = [dict(r) for r in con.execute(
+        "SELECT test_date, test_name, result_value, result_unit, result_text "
+        "FROM labs WHERE member_id_hash = ? ORDER BY test_date DESC LIMIT 10",
+        (member_id_hash,),
+    ).fetchall()]
 
-        progress.progress(1.0, text="Done!")
-        st.success(
-            f"Built FAISS store from {len(documents)} pages / {len(chunks)} chunks "
-            f"→ `{vector_db_path}`"
+    outreach = [dict(r) for r in con.execute(
+        "SELECT attempt_date, channel, outcome, measure_id "
+        "FROM outreach_history WHERE member_id_hash = ? ORDER BY attempt_date DESC LIMIT 10",
+        (member_id_hash,),
+    ).fetchall()]
+
+    con.close()
+    return {"gaps": gaps, "claims": claims, "labs": labs, "outreach": outreach}
+
+
+def tab_documents():
+    st.subheader("Clinical Data")
+    st.caption("Browse the agent data store — members, HEDIS gaps, claims, labs, and outreach history.")
+
+    summary = _clinical_summary()
+
+    # ── seed / refresh controls ───────────────────────────────────────────────
+    col_seed, col_refresh, _ = st.columns([2, 1, 3])
+    with col_seed:
+        if st.button("Seed demo data", use_container_width=True,
+                     help="Populate the clinical store with synthetic demo members"):
+            with st.spinner("Seeding…"):
+                import subprocess
+                env = {**os.environ, "PYTHONPATH": "praktor"}
+                repo_root = str(Path(__file__).parent.parent.parent)
+                r1 = subprocess.run(
+                    ["python", "scripts/init_member_brain.py", "--seed-demo"],
+                    capture_output=True, text=True, env=env, cwd=repo_root,
+                )
+                r2 = subprocess.run(
+                    ["python", "scripts/init_diabetes_demo.py"],
+                    capture_output=True, text=True, env=env, cwd=repo_root,
+                )
+            if r1.returncode == 0 and r2.returncode == 0:
+                st.success("Demo data seeded.")
+                st.cache_data.clear()
+                st.rerun()
+            else:
+                st.error("Seed failed.")
+                for r in (r1, r2):
+                    if r.returncode != 0:
+                        st.code(r.stderr or r.stdout, language="text")
+    with col_refresh:
+        if st.button("Refresh", use_container_width=True):
+            st.cache_data.clear()
+            st.rerun()
+
+    if not summary:
+        st.warning("Clinical store not found. Click **Seed demo data** to create it.")
+        return
+
+    # ── summary metrics ───────────────────────────────────────────────────────
+    cols = st.columns(len(summary))
+    labels = {
+        "members": "Members", "hedis_gaps": "HEDIS Gaps", "claims": "Claims",
+        "labs": "Labs", "vitals": "Vitals", "pdc_scores": "PDC Scores",
+        "outreach_history": "Outreach",
+    }
+    for col, (table, count) in zip(cols, summary.items()):
+        col.metric(labels.get(table, table), count)
+
+    st.divider()
+
+    # ── member browser ────────────────────────────────────────────────────────
+    members = _clinical_members()
+    if not members:
+        st.info("No members in the store. Click **Seed demo data** above.")
+        return
+
+    st.markdown(f"**{len(members)} member(s)**")
+    for m in members:
+        h = m["member_id_hash"]
+        short_hash = h[:12]
+        sdoh_barriers = []
+        try:
+            import json as _json
+            sdoh_barriers = _json.loads(m.get("sdoh_barriers") or "[]")
+        except Exception:
+            pass
+
+        sdoh_str = ", ".join(sdoh_barriers) if sdoh_barriers else "none"
+        label = (
+            f"`{short_hash}…` · Plan `{m.get('plan_id', '—')}` · "
+            f"Lang `{m.get('language','?').upper()}` · "
+            f"SDOH risk `{m.get('sdoh_risk','?')}` · "
+            f"PCP `{m.get('pcp_name','—')}`"
         )
-        st.balloons()
+        with st.expander(label):
+            col_a, col_b = st.columns(2)
+            with col_a:
+                st.markdown(f"**Full hash:** `{h}`")
+                st.markdown(f"**Plan:** `{m.get('plan_id','—')}` · **Year:** {m.get('measurement_year','—')}")
+                st.markdown(f"**Language:** {m.get('language','?').upper()} · **Health literacy:** {m.get('health_literacy','?')}")
+                st.markdown(f"**SDOH risk:** {m.get('sdoh_risk','?')} · **Barriers:** {sdoh_str}")
+                st.markdown(f"**Pharmacy:** {m.get('pharmacy_name','—')} ({m.get('pharmacy_miles','?')} mi)")
+            with col_b:
+                st.markdown(f"**PCP:** {m.get('pcp_name','—')} (`{m.get('pcp_id','—')}`)")
 
-    except Exception as e:
-        progress.empty()
-        st.error(f"Ingestion failed: {e}")
-        st.exception(e)
+            detail = _clinical_member_detail(h)
+
+            if detail["gaps"]:
+                st.markdown("**HEDIS Gaps**")
+                for g in detail["gaps"]:
+                    status_icon = "🟢" if g["status"] == "closed" else "🔴"
+                    pdc = f" · PDC {g['pdc_current']:.0%}" if g.get("pdc_current") else ""
+                    st.markdown(
+                        f"{status_icon} `{g['measure_id']}` {g['measure_name']} "
+                        f"· ★ {g['stars_weight']}x · {g['days_remaining']}d remaining{pdc}"
+                    )
+
+            if detail["claims"]:
+                st.markdown("**Recent Claims**")
+                import pandas as pd
+                st.dataframe(pd.DataFrame(detail["claims"]), use_container_width=True, hide_index=True)
+
+            if detail["labs"]:
+                st.markdown("**Recent Labs**")
+                import pandas as pd
+                st.dataframe(pd.DataFrame(detail["labs"]), use_container_width=True, hide_index=True)
+
+            if detail["outreach"]:
+                st.markdown("**Outreach History**")
+                import pandas as pd
+                st.dataframe(pd.DataFrame(detail["outreach"]), use_container_width=True, hide_index=True)
 
 
 # ---------------------------------------------------------------------------
@@ -545,7 +626,7 @@ def tab_aigov():
         point_options = ["All points", "G-BUILD", "G-TEST", "G-RUN"]
         point_filter = st.selectbox("Enforcement point", point_options)
     with col_f3:
-        if st.button("Refresh", use_container_width=True):
+        if st.button("Refresh", use_container_width=True, key="refresh_aigov"):
             st.cache_resource.clear()
             st.rerun()
 
@@ -686,7 +767,7 @@ def main():
     st.title("⚡ praktor.ai")
     st.caption("General-purpose agentic framework · ReAct · OTel · Prometheus · Grafana")
 
-    tab1, tab2, tab3, tab4 = st.tabs(["📡 Span Tracer", "🤖 Skills", "📄 Documents", "🛡️ AIGov"])
+    tab1, tab2, tab3, tab4 = st.tabs(["📡 Span Tracer", "🤖 Skills", "🏥 Clinical Data", "🛡️ AIGov"])
 
     with tab1:
         tab_tracer()

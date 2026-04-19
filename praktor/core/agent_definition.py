@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from pydantic import BaseModel
 
 from praktor.aigov.event import AgentPattern
+from praktor.settings import MODEL as _DEFAULT_MODEL
 
 if TYPE_CHECKING:
     from praktor.aigov.bundle import ObligationBundle
@@ -55,7 +56,7 @@ class AgentDefinition:
     input_schema: type[BaseModel]
     """Pydantic model used to validate incoming messages."""
 
-    llm_model: str = "qwen2.5"
+    llm_model: str = field(default_factory=lambda: _DEFAULT_MODEL)
     """LLM model string passed to LLMFactory.create_llm()."""
 
     temperature: float = 0.0

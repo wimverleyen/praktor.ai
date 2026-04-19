@@ -24,9 +24,13 @@ from __future__ import annotations
 import re
 import time
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from praktor.core.agent_definition import AgentDefinition, MemoryPolicy
+from praktor.aigov.bundle import healthcare_bundle
+from praktor.clinical.schemas import hash_member_id
+
+_DEMO_MEMBER_HASH = hash_member_id("D001")
 
 # Register all clinical tools at import time
 import praktor.clinical.tools.claims_lookup       # noqa: F401
@@ -44,7 +48,7 @@ import praktor.clinical.tools.drug_adherence      # noqa: F401
 
 class DiabetesHEDISInput(BaseModel):
     agent_type: str = "diabetes_hedis"
-    member_id_hash: str
+    member_id_hash: str = Field(default_factory=lambda: _DEMO_MEMBER_HASH, description="Demo: D001")
     measurement_year: int = 2026
     session_id: str = ""
     history: str = ""
@@ -150,7 +154,6 @@ DiabetesHEDISDefinition = AgentDefinition(
     name="diabetes_hedis",
     prompt_template=_DIABETES_AGENT_PROMPT,
     input_schema=DiabetesHEDISInput,
-    llm_model="llama3:8b",      # override with claude-sonnet-4-6 for production
     temperature=0.0,
     tools=[
         "gap_registry",
@@ -163,6 +166,7 @@ DiabetesHEDISDefinition = AgentDefinition(
     ],
     max_steps=8,
     memory_policy=MemoryPolicy.NONE,
+    obligation_bundle=healthcare_bundle(),
 )
 
 

@@ -823,7 +823,121 @@ PYTHONPATH=praktor pytest tests/test_hedis_agent.py -v
 
 All tests mock the LLM and filesystem. No live Ollama, RabbitMQ, or FAISS needed.
 
-### Dev commands (Makefile)
+
+---
+
+## Commands during development
+
+### Streamlit
+
+```bash
+# Main app — Span Tracer · Skills · Clinical Data · AIGov
+PYTHONPATH=praktor streamlit run praktor/ui/app.py
+# Opens at http://localhost:8501
+
+# Clinical HITL review UI — Dataset · Predict · Review · Evaluate · Traces
+PYTHONPATH=praktor streamlit run praktor/ui/clinical_app.py
+# Opens at http://localhost:8501
+
+# Custom port
+PYTHONPATH=praktor streamlit run praktor/ui/app.py --server.port 8502
+
+# Shell script shortcut (handles PYTHONPATH automatically)
+./scripts/run_ui.sh
+./scripts/run_ui.sh --server.port 8502
+```
+
+### Grafana
+
+Grafana reads metrics from the Prometheus endpoint that praktor exposes.
+
+**Step 1 — start the Prometheus scrape server**
+
+```bash
+python -m praktor monitor serve --port 8080
+# Metrics available at http://localhost:8080/metrics
+```
+
+**Step 2 — start Grafana** (Docker is the fastest path)
+
+```bash
+docker run -d --name grafana -p 3000:3000 grafana/grafana
+# Opens at http://localhost:3000  (default login: admin / admin)
+```
+
+**Step 3 — add Prometheus as a data source**
+
+1. Grafana → **Connections → Data sources → Add new**
+2. Type: **Prometheus**, URL: `http://host.docker.internal:8080`
+3. Click **Save & test**
+
+**Step 4 — import the pre-built dashboard**
+
+```bash
+# Generate the 21-panel dashboard JSON
+python -m praktor monitor export grafana > praktor-dashboard.json
+```
+
+Then in Grafana: **Dashboards → Import → Upload JSON file** → select `praktor-dashboard.json`.
+
+The dashboard includes: run rate, token throughput, cost by model, latency percentiles (P50/P95/P99), error rate, judge score distribution, cache efficiency, tool call breakdown, and business KPIs — all filterable by `agent` and `model`.
+
+### Demo data
+
+```bash
+# Seed HEDIS demo members (DEMO-001 … DEMO-005)
+PYTHONPATH=praktor python scripts/init_member_brain.py --seed-demo
+
+# Seed diabetes demo members (D001, D002, D003)
+PYTHONPATH=praktor python scripts/init_diabetes_demo.py
+```
+
+### Agent demos
+
+```bash
+# HEDIS gap closure — dry run (no LLM needed)
+PYTHONPATH=praktor python scripts/demo_hedis_agent.py --dry-run
+
+# Diabetes HEDIS — dry run
+PYTHONPATH=praktor python scripts/demo_diabetes_agent.py --dry-run
+
+# ReAct loop demo
+PYTHONPATH=praktor python scripts/demo_react.py --question "What is HEDIS?" --model claude-sonnet-4-6
+
+# Judge + prompt optimization pipeline
+PYTHONPATH=praktor python scripts/demo_judge_optimization.py --dry-run
+```
+
+### AIGov
+
+```bash
+# Run build-time governance checks and write events to the ledger
+python -m praktor aigov build-check
+
+# Inspect the AIGov ledger (DuckDB)
+python -c "
+from praktor.aigov.ledger.store import LedgerStore
+from praktor.aigov.ledger.scoreboard import scoreboard_current
+for r in scoreboard_current(LedgerStore()):
+    print(r.agent_id, r.obligation_id, r.enforcement_point, r.status)
+"
+```
+
+### Tests
+
+```bash
+# Full suite
+PYTHONPATH=praktor pytest tests/ -q
+
+# PHI gate — must pass before any FAISS write path ships
+PYTHONPATH=praktor pytest tests/test_clinical_privacy.py -v
+
+# Specific module
+PYTHONPATH=praktor pytest tests/test_hedis_agent.py -v
+PYTHONPATH=praktor pytest tests/test_governance_dx.py -v
+```
+
+### Makefile shortcuts
 
 ```bash
 make help            # show all targets
