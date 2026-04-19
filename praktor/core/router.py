@@ -128,7 +128,6 @@ class Router:
         async for chunk in agent.run(
             validated.model_dump(),
             session_id,
-            caller_identity=caller_identity,
         ):
             yield chunk
 
