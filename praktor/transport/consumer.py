@@ -24,7 +24,7 @@ log = create_log()
 
 async def _handle_message(message: IncomingMessage, router: Router) -> None:
     """Process a single queue message. Ack on success, nack on failure."""
-    async with message.process(requeue_on_error=False, ignore_processed=True):
+    async with message.process(ignore_processed=True):
         try:
             chunks: list[str] = []
             async for chunk in router.dispatch(message.body):
