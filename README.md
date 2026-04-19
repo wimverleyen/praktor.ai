@@ -216,6 +216,7 @@ cp .env.example .env
 | `OLLAMA_HOST` | `http://localhost:11434` | Ollama base URL |
 | `OTLP_ENDPOINT` | — | OTLP gRPC collector (Jaeger, Grafana Alloy). Unset → stdout |
 | `PRAKTOR_MONITORING_DB` | `~/.praktor/monitoring.db` | SQLite monitoring store |
+| `PRAKTOR_JUDGE_CONCURRENCY` | `3` | Max concurrent judge evaluations during calibration |
 | `ANTHROPIC_API_KEY` | — | Required for `claude-*` models |
 | `OPENAI_API_KEY` | — | Required for `gpt-*` models |
 | `MD` | — | Directory for markdown output files |
@@ -721,7 +722,7 @@ Switch model per-agent via `AgentDefinition.llm_model`, or globally via `PRAKTOR
 ```
 praktor.ai/
 ├── praktor/
-│   ├── __main__.py              # CLI: receive | publish | list | monitor | prompt | eval | demo | judge-optimize | promote
+│   ├── __main__.py              # CLI: receive | publish | list | monitor | prompt | eval | demo | judge-optimize | promote | golden-rollback
 │   ├── settings.py              # Config, rotating logs, env vars
 │   │
 │   ├── core/                    # Framework abstractions
@@ -792,13 +793,15 @@ praktor.ai/
 │   ├── test_observability.py    # 17 tests: Span, TrajectoryEvent, LLMCallSpan
 │   ├── test_react.py            # 8 tests: ReAct loop + observability
 │   ├── test_prompt_versioning.py # 27 tests: registry, judge, optimizer
-│   ├── test_monitoring.py       # 53 tests: cost, store, registry, Grafana, record_judge
+│   ├── test_agent_definition.py # 11 tests: AgentDefinition fields, registry_key validation
+│   ├── test_monitoring.py       # 59 tests: cost, store, registry, Grafana, record_judge, judge_type filter
 │   ├── test_clinical_privacy.py # 23 tests: PHI gate, deidentifier, member hashing (IRON RULE)
 │   ├── test_hedis_agent.py      # 17 tests: parser, definition, escalation guardrails
 │   ├── test_base_judge.py       # 20 tests: BaseJudge ABC, evaluate(), compare(), error paths
 │   ├── test_hedis_judge.py      # 8 tests: HEDISJudge scoring + inheritance
 │   ├── test_diabetes_judge.py   # 12 tests: DiabetesHEDISJudge 10-criterion scoring
-│   └── test_judge_calibration.py  # 28 tests: calibration loop, promotion, golden dataset, CLI
+│   ├── test_judge_calibration.py  # 32 tests: calibration loop, promotion, golden dataset, CLI
+│   └── test_clinical_app.py     # 15 tests: _safe_load(), _relative_time(), _score_label()
 │
 ├── praktor/ui/
 │   ├── app.py                   # Streamlit demo UI (3 tabs: Span Tracer, Skills, Docs)
@@ -839,7 +842,7 @@ The UI reads from `~/.praktor/monitoring.db` — start the consumer and publish 
 
 ```bash
 uv run pytest tests/ -q
-# 295 tests — governance, evaluation, ReAct, monitoring, clinical, judge, calibration (all mocked)
+# 661 tests — governance, evaluation, ReAct, monitoring, clinical, judge, calibration (all mocked)
 
 # PHI gate tests — IRON RULE: must pass before FAISS write path ships
 PYTHONPATH=praktor pytest tests/test_clinical_privacy.py -v
@@ -1014,4 +1017,7 @@ python -m praktor judge-optimize             # calibrate both judges against gol
 python -m praktor judge-optimize --agent hedis_gap  # calibrate one judge
 python -m praktor promote <session_id>       # promote HITL-approved run → golden dataset
 python -m praktor promote <session_id> --skip-recalibrate  # promote without recalibration
+python -m praktor golden-rollback <sample_id>  # remove a promoted sample from the golden dataset
+python -m praktor golden-rollback --list     # list all promoted samples
+python -m praktor golden-rollback <sample_id> --dry-run  # preview rollback without writing
 ```

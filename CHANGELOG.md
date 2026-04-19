@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.4.2.0] - 2026-04-19 — Judge Calibration UI, AgentDefinition.registry_key, Structural Fixes
+
+### Added
+
+- **`AgentDefinition.registry_key`** — optional field that validates against `PromptRegistry` at instantiation. Fail-fast: a typo in the key raises `ValueError` before any agent run.
+- **`GoldenSample.is_promoted`** — `@property` that returns `True` when `measurement_year == 0` (the sentinel for promoted production samples). Replaces ad-hoc `measurement_year != 0` checks throughout.
+- **`golden-rollback` CLI** — `python -m praktor golden-rollback <sample_id>` removes a promoted sample from `~/.praktor/golden_custom.jsonl`. `--list` shows all promoted samples. `--dry-run` previews without writing.
+- **Concurrent judge scoring** — `_score_reference_outputs()` now uses `asyncio.gather()` + `asyncio.Semaphore(PRAKTOR_JUDGE_CONCURRENCY)` for parallel evaluation. Default concurrency: 3 (set via `PRAKTOR_JUDGE_CONCURRENCY` env var).
+- **Calibration KPIs** — `calibrate_judges()` now calls `record_kpi()` for `judge.calibration.score_before`, `judge.calibration.score_after`, `judge.calibration.delta`, and `judge.calibration.n_samples` — visible in the monitoring store and Grafana.
+- **`judge_type` filter in `store.aggregate()`** — `aggregate(judge_type="hedis_gap")` now filters to one judge type. Prevents HEDIS (9-dim) and diabetes (10-dim) scores from mixing in aggregate histograms. `CREATE INDEX IF NOT EXISTS idx_judge_type` added.
+- **E6 calibration badge** — Evaluate tab opens with a live badge showing golden sample count and active judge versions (loaded from `PromptRegistry`).
+- **1-click promote in HITL review** — care managers can promote approved recommendations to the golden dataset directly from the Review tab, without going to the CLI.
+- **AIGov obligation pills** — O1–O11 obligation status rendered per-record in the HITL review panel (PASS/FAIL/NA with color coding).
+- **`_safe_load()` helper** — replaces `try/except: return []` in all six data-loading functions. Returns an `Exception` instance on failure so UI can show a friendly error banner instead of silently showing empty state.
+- **Training Data sub-toggle** — Dataset tab (now "📚 Training Data") shows a Golden / Production radio toggle. Production view shows promoted samples with session metadata.
+- **30 new tests** — `TestRegistryKey` (3), `TestIsPromotedProperty` (2), `TestCalibrationKpi` (2), `TestAggregateJudgeTypeFilter` (2), `TestSafeLoad` (4), `TestRelativeTime` (5), `TestScoreLabel` (6), plus 6 updated patch targets in existing suites.
+
+### Changed
+
+- `_REGISTRY_KEYS` renamed to `_AGENT_TYPE_REGISTRY` in `judge_optimizer.py` — private, not exported. Existing code using the old name via import will get `ImportError` (no public API was broken — the dict was not in `__all__`).
+- `PromptRegistry`, `AsyncLLMAdapter`, and `record_kpi` moved to module-level imports in `judge_optimizer.py`. Patch targets for tests changed from source modules to `praktor.clinical.evaluation.judge_optimizer.*`.
+- Dataset tab renamed from "📊 Dataset" to "📚 Training Data" throughout `clinical_app.py`.
+- `create_calibrated_judge()` accepts optional `registry_key` parameter — prefer it over the built-in `agent_type` → key lookup when `AgentDefinition.registry_key` is available.
+
+### Fixed
+
+- All six `_load_*()` functions in `clinical_app.py` previously returned `[]` on any exception, making DB errors indistinguishable from "no data yet." All now propagate via `_safe_load()` so the UI can show a specific error banner.
+- On-demand eval `st.text_area` placeholder now shows the full five-field `NextBestAction` format so `completeness` scores correctly from first use.
+- `test_defaults` in `test_agent_definition.py` was fragile against `.env` overriding `PRAKTOR_MODEL`. Now patches `_DEFAULT_MODEL` at the module level.
+
 ## [0.4.1.0] - 2026-04-19 — Continuous Judge Calibration Loop
 
 ### Added

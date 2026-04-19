@@ -23,25 +23,16 @@ JSON output from the scripts.
 
 ---
 
-## [UI] User-friendly error states
+## [UI] User-friendly error states ✅
 
-**What:** All `_load_*()` helper functions currently return `[]` on exception, making DB
-errors look identical to "no data yet." Fix: let exceptions propagate (or distinguish them
-with a sentinel), and show clinical users a friendly message ("Couldn't load the review
-queue") with an expandable "Show details" section for the raw error.
+**Completed:** v0.4.2.0 (2026-04-19)
 
-**Why:** Trust erosion — a care manager reporting "the queue is empty" may actually have
-a broken database connection. Silent `except: return []` hides failures.
-
-**Pros:** Care managers can diagnose and report real errors. Engineers still get the
-raw exception via the toggle.
-
-**Cons:** Requires touching all 6 `_load_*` functions + the tab rendering functions
-that interpret empty returns. Medium scope refactor.
+**What:** All `_load_*()` helper functions now use `_safe_load()` — exceptions propagate
+as return values (not `[]`), and the UI renders a friendly amber/red banner with the
+raw error in an expander.
 
 **Context:** Identified in `/plan-design-review` Pass 2 (Interaction States, 2026-04-17).
-The on-demand eval panel's error state was already fixed (now uses user-friendly message
-+ expandable diagnostics). The cached data loaders are not yet fixed.
+Implemented in PR11b.
 
 ---
 
@@ -89,40 +80,29 @@ outcome=closed and comparing the distributions on `gap_identification_accuracy`.
 
 ---
 
-## [UI] Improve on-demand eval format contract
+## [UI] Improve on-demand eval format contract ✅
 
-**What:** Update the `st.text_area` placeholder in the on-demand eval panel
-(clinical_app.py ~line 699) to show the full NextBestAction key-value format.
-Add a note that structured output scores highest on `completeness`.
+**Completed:** v0.4.2.0 (2026-04-19)
 
-**Why:** The `completeness` criterion ("all required output fields present") will
-always score low unless the care manager knows to include ACTION_TYPE, RATIONALE,
-DRAFT_MESSAGE, CLOSURE_PROBABILITY, LANGUAGE in the pasted text. The current
-placeholder shows `ACTION_TYPE: pcp_warm_outreach\nRATIONALE: ...` but is
-incomplete.
-
-**Pros:** One-line change. Care managers get accurate completeness scores on
-first use. Prevents confusion about why "completeness" is always 4-5/10.
-
-**Cons:** Longer placeholder text takes more visual space.
+**What:** `st.text_area` placeholder in the on-demand eval panel now shows the full
+five-field `NextBestAction` format (ACTION_TYPE, RATIONALE, DRAFT_MESSAGE,
+CLOSURE_PROBABILITY, LANGUAGE).
 
 **Context:** Identified by outside voice review (2026-04-17) in `/plan-eng-review`.
+Implemented in PR11b.
 
 ---
 
-## [Monitoring] Add judge_type filter to aggregate queries
+## [Monitoring] Add judge_type filter to aggregate queries ✅
 
-**What:** `collector.record_judge()` stores a `judge_type` field but `store.query_metrics()`
-has no `judge_type` filter. Diabetes (10-dim) and HEDIS (9-dim) scores can mix with general
-(5-dim) scores in aggregate histograms if `judge_type` is omitted by callers.
+**Completed:** v0.4.2.0 (2026-04-19)
 
-**Why:** The 10-dim diabetes `overall` and 5-dim general `overall` both use the 0–10 scale —
-the corruption is invisible in dashboards but makes cross-type comparisons meaningless.
-
-**Fix:** Add `judge_type: str | None = None` param to `store.query_metrics()` and an index
-on `judge_evals.judge_type`. Also add a DB index (`CREATE INDEX IF NOT EXISTS ...`).
+**What:** `store.aggregate()` now accepts `judge_type: str | None = None`. `CREATE INDEX
+IF NOT EXISTS idx_judge_type ON judge_evals(judge_type)` added. HEDIS and diabetes
+scores no longer mix in aggregate histograms.
 
 **Context:** Identified by adversarial review (2026-04-17) during `/ship`.
+Implemented in PR11a.
 
 ---
 

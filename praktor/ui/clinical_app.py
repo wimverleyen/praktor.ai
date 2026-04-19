@@ -4,7 +4,7 @@ praktor.ai — Clinical Reasoning UI (Streamlit)
 5-step workflow for diabetes HEDIS gap closure with LLM-as-judge evaluation.
 
 Tabs (workflow order):
-  1. Dataset   — Synthetic golden dataset: 3 engineered demo members
+  1. Training Data — Golden corpus + promoted production examples
   2. Predict   — Run the agentic AI to generate gap closure recommendations
   3. Review    — HITL: care manager approves/modifies/rejects recommendations
   4. Evaluate  — LLM judge scores: 5 base dimensions + clinical extensions
