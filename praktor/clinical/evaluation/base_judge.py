@@ -12,7 +12,7 @@ import re
 from abc import ABC, abstractmethod
 from typing import Any
 
-from praktor.settings import create_log
+from praktor.settings import MODEL as _DEFAULT_MODEL, create_log
 
 log = create_log()
 
@@ -33,7 +33,7 @@ class BaseJudge(ABC):
 
     _eval_prompt: str = ""
     _compare_prompt: str = ""
-    _default_model: str = "llama3:8b"
+    _default_model: str = _DEFAULT_MODEL
 
     def __init__(self, model: str | None = None) -> None:
         self._model = model or self._default_model

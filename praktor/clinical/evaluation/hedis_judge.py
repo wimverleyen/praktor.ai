@@ -119,9 +119,7 @@ class HEDISJudge(BaseJudge):
 
     _eval_prompt = _CLINICAL_EVAL_PROMPT
     _compare_prompt = _COMPARE_PROMPT
-    _default_model = "llama3:8b"
-
-    def __init__(self, model: str = "llama3:8b") -> None:
+    def __init__(self, model: str | None = None) -> None:
         super().__init__(model=model)
 
     def _parse_score(self, response: str, recommendation: Any) -> ClinicalJudgeScore:
