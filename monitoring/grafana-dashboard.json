@@ -1439,7 +1439,7 @@
     {
       "id": 28,
       "type": "row",
-      "title": "Production Eval",
+      "title": "Judge Calibration",
       "collapsed": false,
       "gridPos": {
         "x": 0,
@@ -1452,10 +1452,274 @@
     {
       "id": 29,
       "type": "timeseries",
-      "title": "Production Eval Score by Agent",
+      "title": "Calibration Score \u2014 Before vs After",
       "gridPos": {
         "x": 0,
         "y": 53,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "expr": "praktor_kpi{name=~\"judge\\.calibration\\.score_before\\..*\"}",
+          "legendFormat": "before \u00b7 {{name}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        },
+        {
+          "expr": "praktor_kpi{name=~\"judge\\.calibration\\.score_after\\..*\"}",
+          "legendFormat": "after \u00b7 {{name}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "stacking": {
+          "group": "A",
+          "mode": "none"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "min": 0,
+          "max": 10
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 30,
+      "type": "timeseries",
+      "title": "Calibration Delta (after \u2212 before)",
+      "gridPos": {
+        "x": 12,
+        "y": 53,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "expr": "praktor_kpi{name=~\"judge\\.calibration\\.delta\\..*\"}",
+          "legendFormat": "{{name}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "stacking": {
+          "group": "A",
+          "mode": "none"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "min": -2,
+          "max": 5
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 31,
+      "type": "timeseries",
+      "title": "Golden Dataset \u2014 Actual vs Required Samples",
+      "gridPos": {
+        "x": 0,
+        "y": 61,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "expr": "praktor_kpi{name=~\"judge\\.calibration\\.n_samples\\..*\"}",
+          "legendFormat": "actual \u00b7 {{name}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        },
+        {
+          "expr": "praktor_kpi{name=~\"judge\\.calibration\\.n_required\\..*\"}",
+          "legendFormat": "required \u00b7 {{name}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "stacking": {
+          "group": "A",
+          "mode": "none"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "min": 0
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 32,
+      "type": "timeseries",
+      "title": "Offline Eval \u2014 Per-Criterion Scores",
+      "gridPos": {
+        "x": 12,
+        "y": 61,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "expr": "praktor_kpi{name=\"eval.overall_score\"}",
+          "legendFormat": "overall",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        },
+        {
+          "expr": "praktor_kpi{name=\"eval.accuracy_score\"}",
+          "legendFormat": "accuracy",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        },
+        {
+          "expr": "praktor_kpi{name=\"eval.completeness_score\"}",
+          "legendFormat": "completeness",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        },
+        {
+          "expr": "praktor_kpi{name=\"eval.relevance_score\"}",
+          "legendFormat": "relevance",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        },
+        {
+          "expr": "praktor_kpi{name=\"eval.conciseness_score\"}",
+          "legendFormat": "conciseness",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        },
+        {
+          "expr": "praktor_kpi{name=\"eval.clarity_score\"}",
+          "legendFormat": "clarity",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "stacking": {
+          "group": "A",
+          "mode": "none"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "min": 0,
+          "max": 10
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 33,
+      "type": "row",
+      "title": "Production Eval",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 70,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 34,
+      "type": "timeseries",
+      "title": "Production Eval Score by Agent",
+      "gridPos": {
+        "x": 0,
+        "y": 71,
         "w": 12,
         "h": 8
       },
@@ -1499,12 +1763,12 @@
       }
     },
     {
-      "id": 30,
+      "id": 35,
       "type": "stat",
       "title": "Production Eval Overall",
       "gridPos": {
         "x": 12,
-        "y": 53,
+        "y": 71,
         "w": 6,
         "h": 4
       },
@@ -1565,12 +1829,12 @@
       }
     },
     {
-      "id": 31,
+      "id": 36,
       "type": "stat",
       "title": "Demo Runs Judged",
       "gridPos": {
         "x": 18,
-        "y": 53,
+        "y": 71,
         "w": 6,
         "h": 4
       },
@@ -1622,25 +1886,25 @@
       }
     },
     {
-      "id": 32,
+      "id": 37,
       "type": "row",
       "title": "HITL Review",
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 62,
+        "y": 80,
         "w": 24,
         "h": 1
       },
       "panels": []
     },
     {
-      "id": 33,
+      "id": 38,
       "type": "stat",
       "title": "Pending Reviews",
       "gridPos": {
         "x": 0,
-        "y": 63,
+        "y": 81,
         "w": 6,
         "h": 4
       },
@@ -1700,12 +1964,12 @@
       }
     },
     {
-      "id": 34,
+      "id": 39,
       "type": "stat",
       "title": "Approval Rate",
       "gridPos": {
         "x": 6,
-        "y": 63,
+        "y": 81,
         "w": 6,
         "h": 4
       },
@@ -1765,12 +2029,12 @@
       }
     },
     {
-      "id": 35,
+      "id": 40,
       "type": "timeseries",
       "title": "HITL Review Queue (pending over time)",
       "gridPos": {
         "x": 12,
-        "y": 63,
+        "y": 81,
         "w": 12,
         "h": 8
       },

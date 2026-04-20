@@ -1,7 +1,7 @@
 """
 Grafana dashboard JSON builder.
 
-Generates a production-ready Grafana 10+ dashboard with 5 rows and 18 panels
+Generates a production-ready Grafana 10+ dashboard with 9 rows and 40 panels
 covering all praktor monitoring dimensions that produce real data.
 
 Usage:
@@ -10,15 +10,20 @@ Usage:
     print(json.dumps(build_dashboard(), indent=2))
 
     # CLI:
-    python -m praktor monitor export grafana > praktor-dashboard.json
-    # Then: Grafana → Dashboards → Import → Upload JSON file
+    python -m praktor monitor export grafana > monitoring/grafana-dashboard.json
+    # Then: docker compose up  (auto-provisioned) or Grafana → Import → Upload JSON
 
 Dashboard structure:
-    Row 1: Overview         — total runs, success rate, cost, avg latency, judge score, error rate
-    Row 2: Traffic          — run rate by agent, token rate (input vs output)
-    Row 3: Performance      — latency percentiles, cost by model
-    Row 4: Quality          — judge score distribution, judge score avg by agent
-    Row 5: AIGov Compliance — obligation status by agent, business KPIs
+    Row 1: Overview          — total runs, success rate, cost, avg latency, judge score, error rate
+    Row 2: Traffic           — run rate by agent, token rate (input vs output)
+    Row 3: Performance       — latency percentiles, cost by model
+    Row 4: Quality           — judge score distribution, judge score avg by agent
+    Row 5: AIGov Compliance  — obligation status by agent, business KPIs
+    Row 6: Offline Eval      — per-criterion stat panels (accuracy, completeness, relevance, conciseness, clarity)
+    Row 7: Judge Calibration — score before/after, calibration delta, actual vs required sample count,
+                               per-criterion trend over time
+    Row 8: Production Eval   — score by agent over time, overall score, demo runs judged
+    Row 9: HITL Review       — pending queue, approval rate, queue trend
 """
 
 from __future__ import annotations
@@ -352,9 +357,74 @@ def build_dashboard(
     ))
 
     # ----------------------------------------------------------------
-    # Row 7: Production Eval
+    # Row 7: Judge Calibration
     # ----------------------------------------------------------------
-    panels.append(_row(next(_id), "Production Eval", y=52))
+    panels.append(_row(next(_id), "Judge Calibration", y=52))
+
+    # Score before/after calibration per judge type
+    panels.append(_timeseries(
+        next(_id), "Calibration Score — Before vs After",
+        exprs=[
+            {
+                "expr": 'praktor_kpi{name=~"judge\\.calibration\\.score_before\\..*"}',
+                "legendFormat": "before · {{name}}",
+            },
+            {
+                "expr": 'praktor_kpi{name=~"judge\\.calibration\\.score_after\\..*"}',
+                "legendFormat": "after · {{name}}",
+            },
+        ],
+        datasource=datasource, x=0, y=53, w=12, h=8,
+        unit="short", min_val=0, max_val=10,
+    ))
+
+    # Calibration delta (improvement)
+    panels.append(_timeseries(
+        next(_id), "Calibration Delta (after − before)",
+        exprs=[{
+            "expr": 'praktor_kpi{name=~"judge\\.calibration\\.delta\\..*"}',
+            "legendFormat": "{{name}}",
+        }],
+        datasource=datasource, x=12, y=53, w=12, h=8,
+        unit="short", min_val=-2, max_val=5,
+    ))
+
+    # Sample count vs required
+    panels.append(_timeseries(
+        next(_id), "Golden Dataset — Actual vs Required Samples",
+        exprs=[
+            {
+                "expr": 'praktor_kpi{name=~"judge\\.calibration\\.n_samples\\..*"}',
+                "legendFormat": "actual · {{name}}",
+            },
+            {
+                "expr": 'praktor_kpi{name=~"judge\\.calibration\\.n_required\\..*"}',
+                "legendFormat": "required · {{name}}",
+            },
+        ],
+        datasource=datasource, x=0, y=61, w=12, h=8,
+        unit="short", min_val=0,
+    ))
+
+    # Per-criterion offline eval scores (all 5 base + conciseness)
+    panels.append(_timeseries(
+        next(_id), "Offline Eval — Per-Criterion Scores",
+        exprs=[
+            {"expr": 'praktor_kpi{name="eval.overall_score"}',      "legendFormat": "overall"},
+            {"expr": 'praktor_kpi{name="eval.accuracy_score"}',     "legendFormat": "accuracy"},
+            {"expr": 'praktor_kpi{name="eval.completeness_score"}', "legendFormat": "completeness"},
+            {"expr": 'praktor_kpi{name="eval.relevance_score"}',    "legendFormat": "relevance"},
+            {"expr": 'praktor_kpi{name="eval.conciseness_score"}',  "legendFormat": "conciseness"},
+            {"expr": 'praktor_kpi{name="eval.clarity_score"}',      "legendFormat": "clarity"},
+        ],
+        datasource=datasource, x=12, y=61, w=12, h=8,
+        unit="short", min_val=0, max_val=10,
+    ))
+
+    # ----------------------------------------------------------------
+    # Row 8: Production Eval
+    # ----------------------------------------------------------------
+    panels.append(_row(next(_id), "Production Eval", y=70))
 
     panels.append(_timeseries(
         next(_id), "Production Eval Score by Agent",
@@ -362,13 +432,13 @@ def build_dashboard(
             "expr": 'praktor_production_eval_score',
             "legendFormat": "{{agent}}",
         }],
-        datasource=datasource, x=0, y=53, w=12, h=8,
+        datasource=datasource, x=0, y=71, w=12, h=8,
         unit="short", min_val=0, max_val=10,
     ))
     panels.append(_stat(
         next(_id), "Production Eval Overall",
         expr='praktor_kpi{name="production_eval.score.overall"}',
-        datasource=datasource, x=12, y=53, w=6, h=4,
+        datasource=datasource, x=12, y=71, w=6, h=4,
         color_mode="background",
         thresholds=[
             {"color": "red", "value": None},
@@ -380,7 +450,7 @@ def build_dashboard(
     panels.append(_stat(
         next(_id), "Demo Runs Judged",
         expr='sum(increase(praktor_agent_runs_total{agent=~"hedis_gap|diabetes_hedis"}[7d]))',
-        datasource=datasource, x=18, y=53, w=6, h=4,
+        datasource=datasource, x=18, y=71, w=6, h=4,
         color_mode="background",
         thresholds=[{"color": "blue", "value": None}],
         unit="short",
@@ -389,12 +459,12 @@ def build_dashboard(
     # ----------------------------------------------------------------
     # Row 8: HITL Review
     # ----------------------------------------------------------------
-    panels.append(_row(next(_id), "HITL Review", y=62))
+    panels.append(_row(next(_id), "HITL Review", y=80))
 
     panels.append(_stat(
         next(_id), "Pending Reviews",
         expr='praktor_hitl_pending',
-        datasource=datasource, x=0, y=63, w=6, h=4,
+        datasource=datasource, x=0, y=81, w=6, h=4,
         color_mode="background",
         thresholds=[
             {"color": "green", "value": None},
@@ -406,7 +476,7 @@ def build_dashboard(
     panels.append(_stat(
         next(_id), "Approval Rate",
         expr='praktor_hitl_approval_rate',
-        datasource=datasource, x=6, y=63, w=6, h=4,
+        datasource=datasource, x=6, y=81, w=6, h=4,
         color_mode="background",
         thresholds=[
             {"color": "red", "value": None},
@@ -421,7 +491,7 @@ def build_dashboard(
             "expr": 'praktor_hitl_pending',
             "legendFormat": "pending reviews",
         }],
-        datasource=datasource, x=12, y=63, w=12, h=8,
+        datasource=datasource, x=12, y=81, w=12, h=8,
         unit="short",
     ))
 
