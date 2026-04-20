@@ -852,16 +852,20 @@ def tab_evaluate():
     # E6: Calibration badge
     try:
         from praktor.clinical.evaluation.golden_dataset import load_golden_samples
+        from praktor.clinical.evaluation.judge_optimizer import compute_required_n
         from praktor.core.prompt_registry import PromptRegistry
         samples = load_golden_samples()
         n_golden = sum(1 for s in samples if not s.is_promoted)
         n_promoted = sum(1 for s in samples if s.is_promoted)
+        n_hedis = sum(1 for s in samples if not s.is_promoted and s.agent_type == "hedis_gap")
+        n_dm = sum(1 for s in samples if not s.is_promoted and s.agent_type == "diabetes_hedis")
+        req_n = compute_required_n()
         registry = PromptRegistry()
         hedis_ver = registry.get_active("judge_hedis")
         dm_ver = registry.get_active("judge_diabetes_hedis")
 
         badge_cols = st.columns([2, 2, 2, 2])
-        badge_cols[0].metric("Golden examples", n_golden, help="Built-in reference samples")
+        badge_cols[0].metric("Golden examples", n_golden, help="Built-in reference samples (excl. promoted)")
         badge_cols[1].metric(
             "Promoted examples", n_promoted,
             help="Production runs saved as training examples",
@@ -876,6 +880,38 @@ def tab_evaluate():
             dm_ver.version_id[:8] if dm_ver else "uncalibrated",
             help=f"Avg score: {dm_ver.avg_score:.2f}" if dm_ver and dm_ver.avg_score else None,
         )
+
+        # Sample adequacy row
+        power_cols = st.columns([2, 2, 4])
+        hedis_ok = n_hedis >= req_n
+        dm_ok = n_dm >= req_n
+        power_cols[0].metric(
+            "HEDIS sample power",
+            f"{n_hedis} / {req_n}",
+            delta=f"{n_hedis - req_n:+d} vs min",
+            delta_color="normal" if hedis_ok else "inverse",
+            help=f"Need {req_n} samples for 80% power to detect 0.5-pt bias (δ=0.5, α=0.05)",
+        )
+        power_cols[1].metric(
+            "Diabetes sample power",
+            f"{n_dm} / {req_n}",
+            delta=f"{n_dm - req_n:+d} vs min",
+            delta_color="normal" if dm_ok else "inverse",
+            help=f"Need {req_n} samples for 80% power to detect 0.5-pt bias (δ=0.5, α=0.05)",
+        )
+        if not hedis_ok or not dm_ok:
+            short = []
+            if not hedis_ok:
+                short.append(f"HEDIS ({n_hedis}/{req_n})")
+            if not dm_ok:
+                short.append(f"Diabetes ({n_dm}/{req_n})")
+            power_cols[2].warning(
+                f"⚠ Underpowered: {', '.join(short)}. "
+                f"Promote more HITL-approved runs or run `python -m praktor demo` to add golden samples.",
+                icon=None,
+            )
+        else:
+            power_cols[2].success("✓ Sample size adequate for both judges.", icon=None)
     except Exception:
         pass
 

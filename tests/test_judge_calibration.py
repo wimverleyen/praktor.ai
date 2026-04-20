@@ -740,4 +740,201 @@ class TestCalibrationKpi:
         score_after_calls = [n for n, _ in kpi_calls if "score_after" in n]
         # score_after is emitted only when calibration ran (overall_before < threshold)
         assert len(score_after_calls) >= 1
+
+
+# ---------------------------------------------------------------------------
+# PR12 — compute_required_n() + CalibrationReport sample size fields
+# ---------------------------------------------------------------------------
+
+class TestComputeRequiredN:
+
+    def test_returns_positive_integer(self):
+        from praktor.clinical.evaluation.judge_optimizer import compute_required_n
+        n = compute_required_n()
+        assert isinstance(n, int)
+        assert n > 0
+
+    def test_larger_sigma_requires_more_samples(self):
+        from praktor.clinical.evaluation.judge_optimizer import compute_required_n
+        n_small = compute_required_n(sigma=1.0)
+        n_large = compute_required_n(sigma=2.0)
+        assert n_large > n_small
+
+    def test_larger_delta_requires_fewer_samples(self):
+        """Bigger minimum-detectable effect → need fewer samples to detect it."""
+        from praktor.clinical.evaluation.judge_optimizer import compute_required_n
+        n_strict = compute_required_n(delta=0.25)
+        n_loose = compute_required_n(delta=1.0)
+        assert n_strict > n_loose
+
+    def test_higher_power_requires_more_samples(self):
+        from praktor.clinical.evaluation.judge_optimizer import compute_required_n
+        n_80 = compute_required_n(power=0.80)
+        n_90 = compute_required_n(power=0.90)
+        assert n_90 > n_80
+
+    def test_default_args_match_constants(self):
+        """Default call should match the module-level constant defaults."""
+        from praktor.clinical.evaluation.judge_optimizer import (
+            compute_required_n,
+            _SIGMA_FALLBACK, _SAMPLE_DELTA, _SAMPLE_ALPHA, _SAMPLE_POWER,
+        )
+        n_explicit = compute_required_n(
+            sigma=_SIGMA_FALLBACK,
+            delta=_SAMPLE_DELTA,
+            alpha=_SAMPLE_ALPHA,
+            power=_SAMPLE_POWER,
+        )
+        assert compute_required_n() == n_explicit
+
+    def test_known_value(self):
+        """Spot-check: σ=1.5, δ=0.5, α=0.05, power=0.80 → expected range."""
+        from praktor.clinical.evaluation.judge_optimizer import compute_required_n
+        n = compute_required_n(sigma=1.5, delta=0.5, alpha=0.05, power=0.80)
+        # One-tailed z-test: (1.645 + 0.842)^2 * (1.5/0.5)^2 ≈ 55.6 → 56
+        assert 50 <= n <= 65
+
+
+class TestCalibrationReportSampleFields:
+
+    def test_sufficient_samples_true_when_n_exceeds_required(self):
+        from praktor.clinical.evaluation.judge_optimizer import CalibrationReport
+        report = CalibrationReport(
+            agent_type="hedis_gap", n_samples=100,
+            mean_score_before=8.0, mean_score_after=None,
+            criteria_means={}, needs_calibration=False,
+            prompt_version_id=None, notes="",
+            required_n=56, sufficient_samples=True,
+        )
+        assert report.sufficient_samples is True
+        assert report.required_n == 56
+
+    def test_sufficient_samples_false_when_n_below_required(self):
+        from praktor.clinical.evaluation.judge_optimizer import CalibrationReport
+        report = CalibrationReport(
+            agent_type="hedis_gap", n_samples=10,
+            mean_score_before=8.0, mean_score_after=None,
+            criteria_means={}, needs_calibration=False,
+            prompt_version_id=None, notes="",
+            required_n=56, sufficient_samples=False,
+        )
+        assert report.sufficient_samples is False
+
+    def test_defaults_are_safe(self):
+        """required_n=0 and sufficient_samples=True are safe backward-compat defaults."""
+        from praktor.clinical.evaluation.judge_optimizer import CalibrationReport
+        report = CalibrationReport(
+            agent_type="hedis_gap", n_samples=5,
+            mean_score_before=6.0, mean_score_after=None,
+            criteria_means={}, needs_calibration=True,
+            prompt_version_id=None, notes="",
+        )
+        assert report.required_n == 0
+        assert report.sufficient_samples is True
+
+
+class TestCalibrateJudgesSampleSize:
+
+    @pytest.mark.asyncio
+    async def test_report_includes_required_n(self, monkeypatch):
+        """calibrate_judges() sets required_n > 0 on the returned report."""
+        from praktor.clinical.evaluation import judge_optimizer as jopt
+
+        monkeypatch.setattr(jopt, "record_kpi", lambda *a, **kw: None)
+
+        async def _mock_score(judge, samples):
+            return [self._fake_score(8.5)] * max(len(samples), 1)
+
+        monkeypatch.setattr(jopt, "_score_reference_outputs", _mock_score)
+
+        from praktor.clinical.evaluation.golden_dataset import GoldenSample
+        fake_sample = GoldenSample(
+            sample_id="SZ-001", agent_type="hedis_gap", raw_member_id="T3",
+            measurement_year=2024, clinical_scenario="scenario", reference_output="output",
+            expected_action="pcp_warm_outreach", expected_measures=["GSD"], outcome="closed",
+        )
+        monkeypatch.setattr(
+            "praktor.clinical.evaluation.golden_dataset.load_golden_samples",
+            lambda agent_type=None: [fake_sample],
+        )
+
+        with patch("praktor.clinical.evaluation.judge_optimizer.PromptRegistry") as MockReg:
+            MockReg.return_value.get_active.return_value = _make_prompt_version()
+            reports = await jopt.calibrate_judges(agent_type="hedis_gap", verbose=False)
+
+        assert len(reports) == 1
+        assert reports[0].required_n > 0
+
+    @pytest.mark.asyncio
+    async def test_report_sufficient_samples_false_when_underpowered(self, monkeypatch):
+        """With 1 sample, sufficient_samples should be False."""
+        from praktor.clinical.evaluation import judge_optimizer as jopt
+
+        monkeypatch.setattr(jopt, "record_kpi", lambda *a, **kw: None)
+
+        async def _mock_score(judge, samples):
+            return [self._fake_score(8.5)] * max(len(samples), 1)
+
+        monkeypatch.setattr(jopt, "_score_reference_outputs", _mock_score)
+
+        from praktor.clinical.evaluation.golden_dataset import GoldenSample
+        fake_sample = GoldenSample(
+            sample_id="SZ-002", agent_type="hedis_gap", raw_member_id="T4",
+            measurement_year=2024, clinical_scenario="scenario", reference_output="output",
+            expected_action="pcp_warm_outreach", expected_measures=["GSD"], outcome="closed",
+        )
+        monkeypatch.setattr(
+            "praktor.clinical.evaluation.golden_dataset.load_golden_samples",
+            lambda agent_type=None: [fake_sample],
+        )
+
+        with patch("praktor.clinical.evaluation.judge_optimizer.PromptRegistry") as MockReg:
+            MockReg.return_value.get_active.return_value = _make_prompt_version()
+            reports = await jopt.calibrate_judges(agent_type="hedis_gap", verbose=False)
+
+        assert reports[0].sufficient_samples is False
+
+    @pytest.mark.asyncio
+    async def test_n_required_kpi_emitted(self, monkeypatch):
+        """calibrate_judges() emits judge.calibration.n_required.* KPI."""
+        from praktor.clinical.evaluation import judge_optimizer as jopt
+
+        kpi_calls = []
+        monkeypatch.setattr(jopt, "record_kpi", lambda n, v: kpi_calls.append((n, v)))
+
+        async def _mock_score(judge, samples):
+            return [self._fake_score(8.5)] * max(len(samples), 1)
+
+        monkeypatch.setattr(jopt, "_score_reference_outputs", _mock_score)
+
+        from praktor.clinical.evaluation.golden_dataset import GoldenSample
+        fake_sample = GoldenSample(
+            sample_id="SZ-003", agent_type="hedis_gap", raw_member_id="T5",
+            measurement_year=2024, clinical_scenario="scenario", reference_output="output",
+            expected_action="pcp_warm_outreach", expected_measures=["GSD"], outcome="closed",
+        )
+        monkeypatch.setattr(
+            "praktor.clinical.evaluation.golden_dataset.load_golden_samples",
+            lambda agent_type=None: [fake_sample],
+        )
+
+        with patch("praktor.clinical.evaluation.judge_optimizer.PromptRegistry") as MockReg:
+            MockReg.return_value.get_active.return_value = _make_prompt_version()
+            await jopt.calibrate_judges(agent_type="hedis_gap", verbose=False)
+
+        n_req_calls = [n for n, _ in kpi_calls if "n_required" in n]
+        assert len(n_req_calls) == 1
+        assert n_req_calls[0] == "judge.calibration.n_required.hedis_gap"
+
+    @staticmethod
+    def _fake_score(overall: float = 8.5):
+        from types import SimpleNamespace
+        attrs = {
+            "overall": overall,
+            "accuracy": overall, "completeness": overall, "relevance": overall,
+            "conciseness": overall, "clarity": overall,
+            "gap_identification_accuracy": overall, "action_appropriateness": overall,
+            "evidence_citation_quality": overall, "safety_flag_coverage": overall,
+        }
+        return SimpleNamespace(**attrs)
         assert score_after_calls[0] == "judge.calibration.score_after.hedis_gap"

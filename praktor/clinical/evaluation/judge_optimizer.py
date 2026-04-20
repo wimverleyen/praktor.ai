@@ -19,8 +19,10 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+import math
 import statistics
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from statistics import NormalDist
 from typing import Any
 
 from praktor.LLM.llm_interface import AsyncLLMAdapter
@@ -37,12 +39,43 @@ _CALIBRATION_THRESHOLD = 7.0
 # Number of golden samples to include as few-shot examples in the prompt
 _FEW_SHOT_COUNT = 3
 
+# Sample size estimation defaults.
+# delta: minimum bias worth detecting (0.5 pts below threshold = meaningful miscalibration)
+# alpha: one-tailed false-positive rate
+# power: probability of detecting real bias
+_SAMPLE_DELTA = 0.5
+_SAMPLE_ALPHA = 0.05
+_SAMPLE_POWER = 0.80
+_SIGMA_FALLBACK = 1.5  # assumed σ when fewer than 2 scored samples
+
 # Private mapping — source of truth for registry key lookup.
 # Prefer reading from AgentDefinition.registry_key when available.
 _AGENT_TYPE_REGISTRY: dict[str, str] = {
     "hedis_gap":      "judge_hedis",
     "diabetes_hedis": "judge_diabetes_hedis",
 }
+
+
+def compute_required_n(
+    sigma: float = _SIGMA_FALLBACK,
+    delta: float = _SAMPLE_DELTA,
+    alpha: float = _SAMPLE_ALPHA,
+    power: float = _SAMPLE_POWER,
+) -> int:
+    """Minimum sample size for adequate power to detect undercalibration.
+
+    One-tailed z-test: detect mean < _CALIBRATION_THRESHOLD with given power.
+    n = ceil((z_α + z_β)² × σ² / δ²)
+
+    Args:
+        sigma: observed (or assumed) score standard deviation
+        delta: minimum bias worth detecting (points below threshold)
+        alpha: one-tailed false-positive rate
+        power: probability of detecting real bias when it exists
+    """
+    z_alpha = NormalDist().inv_cdf(1 - alpha)
+    z_beta = NormalDist().inv_cdf(power)
+    return math.ceil((z_alpha + z_beta) ** 2 * sigma ** 2 / delta ** 2)
 
 
 @dataclass
@@ -55,12 +88,21 @@ class CalibrationReport:
     needs_calibration: bool
     prompt_version_id: str | None
     notes: str
+    required_n: int = 0
+    sufficient_samples: bool = True
 
     def print_summary(self) -> None:
         arrow = f"→ {self.mean_score_after:.2f}" if self.mean_score_after else ""
+        adequacy = (
+            f"  ⚠ Underpowered: n={self.n_samples} < required {self.required_n} "
+            f"(δ={_SAMPLE_DELTA}, power={int(_SAMPLE_POWER*100)}%)"
+            if not self.sufficient_samples else
+            f"  ✓ Sample size adequate: n={self.n_samples} ≥ required {self.required_n}"
+        )
         print(f"\n{'─'*60}")
         print(f"  Judge calibration: {self.agent_type}")
         print(f"  Samples: {self.n_samples}  mean score: {self.mean_score_before:.2f} {arrow}")
+        print(adequacy)
         print(f"  Calibration needed: {'YES' if self.needs_calibration else 'no'}")
         print(f"  Criteria means:")
         for k, v in self.criteria_means.items():
@@ -268,12 +310,25 @@ async def calibrate_judges(
         )
         needs_cal = overall_before < _CALIBRATION_THRESHOLD
 
+        # Sample size estimation — σ from observed scores, fallback to assumed 1.5
+        overall_scores = [getattr(s, "overall", 5.0) for s in scores_before]
+        sigma_obs = statistics.stdev(overall_scores) if len(overall_scores) >= 2 else _SIGMA_FALLBACK
+        required_n = compute_required_n(sigma=sigma_obs)
+        sufficient = len(scores_before) >= required_n
+
         record_kpi(f"judge.calibration.score_before.{atype}", overall_before)
         record_kpi(f"judge.calibration.n_samples.{atype}", len(scores_before))
+        record_kpi(f"judge.calibration.n_required.{atype}", required_n)
 
         if verbose:
             print(f"  Mean score on reference outputs: {overall_before:.2f}/10 "
                   f"({'calibration needed' if needs_cal else 'OK'})")
+            if not sufficient:
+                print(
+                    f"  ⚠ WARNING: n={len(scores_before)} samples — need {required_n} for "
+                    f"{int(_SAMPLE_POWER*100)}% power to detect {_SAMPLE_DELTA}-pt bias "
+                    f"(σ≈{sigma_obs:.2f}). Add more golden samples for reliable calibration."
+                )
 
         version_id = None
         overall_after = None
@@ -341,6 +396,15 @@ async def calibrate_judges(
                 if verbose:
                     print(f"  Warning: prompt save failed: {e}")
 
+        power_note = (
+            f"⚠ Underpowered: n={len(scores_before)} < required {required_n} "
+            f"(δ={_SAMPLE_DELTA}, {int(_SAMPLE_POWER*100)}% power, σ≈{sigma_obs:.2f}). "
+            f"Add more golden samples."
+            if not sufficient else ""
+        )
+        base_note = "" if needs_cal else "Judge well-calibrated — no changes needed."
+        notes = " | ".join(n for n in [base_note, power_note] if n)
+
         report = CalibrationReport(
             agent_type=atype,
             n_samples=len(scoring_samples),
@@ -349,7 +413,9 @@ async def calibrate_judges(
             criteria_means=means_before,
             needs_calibration=needs_cal,
             prompt_version_id=version_id,
-            notes="" if needs_cal else "Judge well-calibrated — no changes needed.",
+            notes=notes,
+            required_n=required_n,
+            sufficient_samples=sufficient,
         )
         if verbose:
             report.print_summary()
