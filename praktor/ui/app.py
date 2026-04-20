@@ -457,8 +457,8 @@ def _clinical_member_detail(member_id_hash: str) -> dict:
     ).fetchall()]
 
     outreach = [dict(r) for r in con.execute(
-        "SELECT attempt_date, channel, outcome, measure_id "
-        "FROM outreach_history WHERE member_id_hash = ? ORDER BY attempt_date DESC LIMIT 10",
+        "SELECT contact_date, channel, outcome, measure_id "
+        "FROM outreach_history WHERE member_id_hash = ? ORDER BY contact_date DESC LIMIT 10",
         (member_id_hash,),
     ).fetchall()]
 
