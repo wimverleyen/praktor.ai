@@ -47,6 +47,10 @@ def _get_judge(agent_type: str):
         elif agent_type == "diabetes_hedis":
             from praktor.clinical.evaluation.diabetes_hedis_judge import DiabetesHEDISJudge
             _JUDGES[agent_type] = create_calibrated_judge(DiabetesHEDISJudge, "diabetes_hedis")
+        else:
+            # General judge for all non-clinical agents
+            from praktor.evaluation.general_judge import GeneralJudge
+            _JUDGES[agent_type] = GeneralJudge()
     return _JUDGES.get(agent_type)
 
 

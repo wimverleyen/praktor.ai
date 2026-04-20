@@ -51,8 +51,16 @@ _SIGMA_FALLBACK = 1.5  # assumed σ when fewer than 2 scored samples
 # Private mapping — source of truth for registry key lookup.
 # Prefer reading from AgentDefinition.registry_key when available.
 _AGENT_TYPE_REGISTRY: dict[str, str] = {
-    "hedis_gap":      "judge_hedis",
-    "diabetes_hedis": "judge_diabetes_hedis",
+    "hedis_gap":        "judge_hedis",
+    "diabetes_hedis":   "judge_diabetes_hedis",
+    # General agents share one judge registry key
+    "cover_letter":     "judge_general",
+    "job_application":  "judge_general",
+    "job_interview":    "judge_general",
+    "keywords_extraction": "judge_general",
+    "message":          "judge_general",
+    "search":           "judge_general",
+    "thank_you":        "judge_general",
 }
 
 
@@ -200,19 +208,34 @@ async def ensure_judges_calibrated(
 
     Called at the top of run_offline_eval() and run_demo() so the first eval
     run automatically calibrates rather than requiring a manual judge-optimize step.
+    Collapses all general agent types to the single "judge_general" registry key.
     """
+    from praktor.evaluation.general_golden_dataset import GENERAL_AGENT_TYPES
     registry = PromptRegistry()
-    types = [agent_type] if agent_type else list(_AGENT_TYPE_REGISTRY.keys())
-    needs_cal = [t for t in types if registry.get_active(_AGENT_TYPE_REGISTRY[t]) is None]
 
-    if not needs_cal:
+    # Deduplicate registry keys — all general agents share "judge_general"
+    _general_set = set(GENERAL_AGENT_TYPES)
+    if agent_type:
+        keys_to_check = {"judge_general"} if agent_type in _general_set else {_AGENT_TYPE_REGISTRY[agent_type]}
+    else:
+        keys_to_check = {"judge_hedis", "judge_diabetes_hedis", "judge_general"}
+
+    missing_keys = {k for k in keys_to_check if registry.get_active(k) is None}
+    if not missing_keys:
         return
 
     if verbose:
-        print(f"No calibrated judge found for {needs_cal} — auto-calibrating...")
+        print(f"No calibrated judge found for registry keys {missing_keys} — auto-calibrating...")
 
-    cal_agent = needs_cal[0] if len(needs_cal) == 1 else None
-    await calibrate_judges(agent_type=cal_agent, verbose=verbose)
+    # Map missing keys back to calibrate_judges() agent_type argument
+    _key_to_cal_type = {
+        "judge_hedis": "hedis_gap",
+        "judge_diabetes_hedis": "diabetes_hedis",
+        "judge_general": "general",
+    }
+    for key in missing_keys:
+        cal_type = _key_to_cal_type.get(key)
+        await calibrate_judges(agent_type=cal_type, verbose=verbose)
 
 
 def _build_few_shot_block(samples: list, n: int) -> str:
@@ -251,18 +274,23 @@ async def calibrate_judges(
     from praktor.clinical.evaluation.diabetes_hedis_judge import (
         DiabetesHEDISJudge, _DIABETES_EVAL_PROMPT,
     )
+    from praktor.evaluation.general_judge import GeneralJudge, _GENERAL_EVAL_PROMPT
+    from praktor.evaluation.general_golden_dataset import (
+        load_general_golden_samples, GENERAL_AGENT_TYPES,
+    )
 
     registry = PromptRegistry()
     effective_model = model or MODEL
     reports = []
+
+    _std_criteria = ["accuracy", "completeness", "relevance", "conciseness", "clarity"]
 
     configs = {
         "hedis_gap": {
             "judge_cls": HEDISJudge,
             "base_prompt": _CLINICAL_EVAL_PROMPT,
             "registry_key": "judge_hedis",
-            "criteria": [
-                "accuracy", "completeness", "relevance", "conciseness", "clarity",
+            "criteria": _std_criteria + [
                 "gap_identification_accuracy", "action_appropriateness",
                 "evidence_citation_quality", "safety_flag_coverage",
             ],
@@ -271,20 +299,51 @@ async def calibrate_judges(
             "judge_cls": DiabetesHEDISJudge,
             "base_prompt": _DIABETES_EVAL_PROMPT,
             "registry_key": "judge_diabetes_hedis",
-            "criteria": [
-                "accuracy", "completeness", "relevance", "conciseness", "clarity",
+            "criteria": _std_criteria + [
                 "inertia_detection_accuracy", "escalation_ladder_correctness",
                 "gap_stacking_completeness", "evidence_anchor_quality",
                 "safety_exclusion_coverage",
             ],
         },
+        # All general agents share one judge — calibrate once under the representative key
+        "general": {
+            "judge_cls": GeneralJudge,
+            "base_prompt": _GENERAL_EVAL_PROMPT,
+            "registry_key": "judge_general",
+            "criteria": _std_criteria,
+        },
     }
 
-    types = [agent_type] if agent_type else ["hedis_gap", "diabetes_hedis"]
+    # Resolve requested types → calibration configs
+    # Clinical agents map 1:1; all general agent types collapse to "general"
+    _general_agent_types = set(GENERAL_AGENT_TYPES)
+    if agent_type:
+        if agent_type in _general_agent_types:
+            types = ["general"]
+        else:
+            types = [agent_type]
+    else:
+        types = ["hedis_gap", "diabetes_hedis", "general"]
 
     for atype in types:
         cfg = configs[atype]
-        samples = load_golden_samples(agent_type=atype)
+
+        # Load the right golden dataset: general type uses GeneralGoldenSample list,
+        # clinical types use the clinical GoldenSample list.
+        if atype == "general":
+            raw_samples = load_general_golden_samples()
+            # Wrap general samples so _score_reference_outputs can call judge.evaluate()
+            # with the right fields (reference_output / context / outcome=None)
+            class _GeneralSampleAdapter:
+                def __init__(self, s):
+                    self.sample_id = s.sample_id
+                    self.reference_output = s.reference_output
+                    self.clinical_scenario = s.context
+                    self.outcome = "ok"
+                    self.measurement_year = 1  # not 0 — include in scoring
+            samples = [_GeneralSampleAdapter(s) for s in raw_samples]
+        else:
+            samples = load_golden_samples(agent_type=atype)
 
         if verbose:
             print(f"\nCalibrating judge for '{atype}' using {len(samples)} golden samples...")

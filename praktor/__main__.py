@@ -316,19 +316,26 @@ def cmd_eval(args):
     Run offline or production evaluation.
 
     Usage:
-        python -m praktor eval                      # offline: all 20 golden samples
-        python -m praktor eval --agent hedis_gap    # offline: 10 HEDIS samples
-        python -m praktor eval --production         # judge recent production runs
-        python -m praktor eval --dry-run            # offline: judge reference outputs only (fast)
+        python -m praktor eval                          # offline: all agents (clinical + general)
+        python -m praktor eval --agent hedis_gap        # offline: clinical HEDIS
+        python -m praktor eval --agent cover_letter     # offline: general agent
+        python -m praktor eval --general                # offline: all 7 general agents
+        python -m praktor eval --production             # judge recent production runs
+        python -m praktor eval --dry-run                # offline: judge reference outputs only
     """
     import asyncio
+    from praktor.evaluation.general_golden_dataset import GENERAL_AGENT_TYPES
+
+    _clinical_types = {"hedis_gap", "diabetes_hedis"}
+    requested_agent = getattr(args, "agent", None) or None
+    general_only = getattr(args, "general", False)
 
     if getattr(args, "production", False):
         from praktor.clinical.evaluation.production_eval import run_production_eval
 
         async def _run_prod():
             n = await run_production_eval(
-                agent_type=getattr(args, "agent", None) or None,
+                agent_type=requested_agent,
                 hours=getattr(args, "hours", 24),
                 limit=getattr(args, "limit", 20),
                 verbose=True,
@@ -336,21 +343,60 @@ def cmd_eval(args):
             print(f"\nProduction eval complete: {n} run(s) judged.")
 
         asyncio.run(_run_prod())
-    else:
-        from praktor.clinical.evaluation.offline_eval import run_offline_eval, print_per_sample_detail
+        return
 
-        async def _run():
-            reports = await run_offline_eval(
-                agent_type=getattr(args, "agent", None) or None,
-                concurrency=getattr(args, "concurrency", 2),
-                verbose=True,
-                dry_run=getattr(args, "dry_run", False),
+    # Offline eval — route by agent type
+    concurrency = getattr(args, "concurrency", 2)
+    dry_run = getattr(args, "dry_run", False)
+    detail = getattr(args, "detail", False)
+
+    async def _run():
+        if general_only or (requested_agent and requested_agent not in _clinical_types):
+            # General agent eval
+            from praktor.evaluation.general_offline_eval import (
+                run_general_eval, print_general_per_sample_detail,
             )
-            if getattr(args, "detail", False):
+            agent_arg = requested_agent if requested_agent in GENERAL_AGENT_TYPES else None
+            reports = await run_general_eval(
+                agent_type=agent_arg,
+                concurrency=concurrency,
+                verbose=True,
+                dry_run=dry_run,
+            )
+            if detail:
+                for report in reports:
+                    print_general_per_sample_detail(report)
+        elif requested_agent in _clinical_types or (not requested_agent and not general_only):
+            # Clinical eval (or both when no filter)
+            from praktor.clinical.evaluation.offline_eval import (
+                run_offline_eval, print_per_sample_detail,
+            )
+            reports = await run_offline_eval(
+                agent_type=requested_agent,
+                concurrency=concurrency,
+                verbose=True,
+                dry_run=dry_run,
+            )
+            if detail:
                 for report in reports:
                     print_per_sample_detail(report)
 
-        asyncio.run(_run())
+            # When no filter, also run general agents
+            if not requested_agent:
+                from praktor.evaluation.general_offline_eval import (
+                    run_general_eval, print_general_per_sample_detail,
+                )
+                gen_reports = await run_general_eval(
+                    agent_type=None,
+                    concurrency=concurrency,
+                    verbose=True,
+                    dry_run=dry_run,
+                )
+                if detail:
+                    for report in gen_reports:
+                        print_general_per_sample_detail(report)
+
+    asyncio.run(_run())
 
 
 def cmd_demo(args):
@@ -726,10 +772,18 @@ def main():
     po.add_argument("--model", "-m", default="qwen2.5", help="LLM model for optimization")
 
     # --- eval ---
+    _all_agent_choices = [
+        "hedis_gap", "diabetes_hedis",
+        "cover_letter", "job_application", "job_interview",
+        "keywords_extraction", "message", "search", "thank_you",
+    ]
     ev = sub.add_parser("eval", help="Run offline or production evaluation")
     ev.add_argument("--agent", "-a",
-                    choices=["hedis_gap", "diabetes_hedis"],
-                    default=None, help="Filter to one agent type (default: both)")
+                    choices=_all_agent_choices,
+                    default=None,
+                    help="Filter to one agent type (default: all agents)")
+    ev.add_argument("--general", action="store_true",
+                    help="Run offline eval for all 7 general (non-clinical) agents")
     ev.add_argument("--concurrency", "-c", type=int, default=2,
                     help="Max parallel agent runs for offline eval (default: 2)")
     ev.add_argument("--detail", action="store_true",
@@ -761,8 +815,9 @@ def main():
     # --- judge-optimize ---
     jo = sub.add_parser("judge-optimize", help="Calibrate AI judges using the golden dataset")
     jo.add_argument("--agent", "-a",
-                    choices=["hedis_gap", "diabetes_hedis"],
-                    default=None, help="Calibrate only this judge (default: both)")
+                    choices=["hedis_gap", "diabetes_hedis", "general"] + _all_agent_choices,
+                    default=None,
+                    help="Calibrate this judge (default: all). General agents share judge_general.")
     jo.add_argument("--model", "-m", default=None,
                     help="Override LLM model for judge (default: from settings)")
 
