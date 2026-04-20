@@ -173,7 +173,7 @@ def tab_tracer():
     with col_f3:
         limit = st.number_input("Max rows", min_value=10, max_value=500, value=100, step=10)
 
-    if st.button("Refresh", use_container_width=True, key="refresh_span_tracer"):
+    if st.button("Refresh", width="stretch", key="refresh_span_tracer"):
         st.cache_data.clear()
 
     runs = _query_runs(float(hours), agent_filter, int(limit))
@@ -353,7 +353,7 @@ def tab_skills():
             placeholder=defn.llm_model,
             key=f"{selected}_model_override",
         )
-        submitted = st.form_submit_button("Run agent", use_container_width=True, type="primary")
+        submitted = st.form_submit_button("Run agent", width="stretch", type="primary")
 
     if submitted:
         payload["agent_type"] = selected
@@ -475,7 +475,7 @@ def tab_documents():
     # ── seed / refresh controls ───────────────────────────────────────────────
     col_seed, col_refresh, _ = st.columns([2, 1, 3])
     with col_seed:
-        if st.button("Seed demo data", use_container_width=True,
+        if st.button("Seed demo data", width="stretch",
                      help="Populate the clinical store with synthetic demo members"):
             with st.spinner("Seeding…"):
                 import subprocess
@@ -499,7 +499,7 @@ def tab_documents():
                     if r.returncode != 0:
                         st.code(r.stderr or r.stdout, language="text")
     with col_refresh:
-        if st.button("Refresh", use_container_width=True):
+        if st.button("Refresh", width="stretch"):
             st.cache_data.clear()
             st.rerun()
 
@@ -569,17 +569,17 @@ def tab_documents():
             if detail["claims"]:
                 st.markdown("**Recent Claims**")
                 import pandas as pd
-                st.dataframe(pd.DataFrame(detail["claims"]), use_container_width=True, hide_index=True)
+                st.dataframe(pd.DataFrame(detail["claims"]), width="stretch", hide_index=True)
 
             if detail["labs"]:
                 st.markdown("**Recent Labs**")
                 import pandas as pd
-                st.dataframe(pd.DataFrame(detail["labs"]), use_container_width=True, hide_index=True)
+                st.dataframe(pd.DataFrame(detail["labs"]), width="stretch", hide_index=True)
 
             if detail["outreach"]:
                 st.markdown("**Outreach History**")
                 import pandas as pd
-                st.dataframe(pd.DataFrame(detail["outreach"]), use_container_width=True, hide_index=True)
+                st.dataframe(pd.DataFrame(detail["outreach"]), width="stretch", hide_index=True)
 
 
 # ---------------------------------------------------------------------------
@@ -626,7 +626,7 @@ def tab_aigov():
         point_options = ["All points", "G-BUILD", "G-TEST", "G-RUN"]
         point_filter = st.selectbox("Enforcement point", point_options)
     with col_f3:
-        if st.button("Refresh", use_container_width=True, key="refresh_aigov"):
+        if st.button("Refresh", width="stretch", key="refresh_aigov"):
             st.cache_resource.clear()
             st.rerun()
 
@@ -699,7 +699,7 @@ def tab_aigov():
         with col_c:
             att_days = st.number_input("Validity (days)", min_value=1, max_value=365, value=30)
         att_notes = st.text_input("Notes (optional)", value="")
-        submitted = st.form_submit_button("Generate Attestation", use_container_width=True)
+        submitted = st.form_submit_button("Generate Attestation", width="stretch")
 
     if submitted:
         from praktor.aigov.attestation import create_attestation
@@ -841,7 +841,7 @@ def tab_eval_monitor():
                 lambda t: datetime.fromtimestamp(t).strftime("%m-%d %H:%M") if t else ""
             )
             df["session_id"] = df["session_id"].str[:14]
-            st.dataframe(df, use_container_width=True, hide_index=True)
+            st.dataframe(df, width="stretch", hide_index=True)
 
     # ── Production Eval ────────────────────────────────────────────────────────
     with subtab_prod:
@@ -889,7 +889,7 @@ def tab_eval_monitor():
                 lambda t: datetime.fromtimestamp(t).strftime("%m-%d %H:%M") if t else ""
             )
             df["session_id"] = df["session_id"].str[:16]
-            st.dataframe(df, use_container_width=True, hide_index=True)
+            st.dataframe(df, width="stretch", hide_index=True)
 
     # ── HITL Review Queue ──────────────────────────────────────────────────────
     with subtab_hitl:
@@ -977,7 +977,7 @@ def tab_eval_monitor():
                     lambda t: datetime.fromtimestamp(float(t)).strftime("%m-%d %H:%M")
                     if t else ""
                 )
-                st.dataframe(df, use_container_width=True, hide_index=True)
+                st.dataframe(df, width="stretch", hide_index=True)
 
 
 # ---------------------------------------------------------------------------
