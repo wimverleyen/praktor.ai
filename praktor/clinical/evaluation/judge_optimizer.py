@@ -392,6 +392,19 @@ async def calibrate_judges(
         version_id = None
         overall_after = None
 
+        # Always register the base prompt so `prompt list` has at least one entry
+        try:
+            base_ver = registry.save(
+                agent_name=cfg["registry_key"],
+                template=cfg["base_prompt"],
+                notes="Base judge prompt",
+            )
+            if registry.get_active(cfg["registry_key"]) is None:
+                registry.set_active(cfg["registry_key"], base_ver.version_id)
+                version_id = base_ver.version_id
+        except Exception as e:
+            log.warning(f"Judge base prompt save failed: {e}")
+
         if needs_cal:
             if verbose:
                 print(f"  Score below {_CALIBRATION_THRESHOLD} — injecting few-shot calibration examples...")
@@ -401,20 +414,10 @@ async def calibrate_judges(
 
             # Save calibrated prompt to PromptRegistry
             try:
-                existing = registry.get_active(cfg["registry_key"])
-                if existing is None:
-                    # Create initial version from base prompt
-                    ver = registry.save(
-                        agent_name=cfg["registry_key"],
-                        prompt_template=cfg["base_prompt"],
-                        notes="Initial judge prompt",
-                    )
-                    registry.set_active(cfg["registry_key"], ver.version_id)
-
                 # Save calibrated version
                 cal_ver = registry.save(
                     agent_name=cfg["registry_key"],
-                    prompt_template=calibrated_prompt,
+                    template=calibrated_prompt,
                     notes=f"Calibrated: few-shot from golden dataset "
                           f"(mean before={overall_before:.2f})",
                 )
