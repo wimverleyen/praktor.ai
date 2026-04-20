@@ -1,10 +1,12 @@
 """
 praktor.ai — Streamlit demo UI
 
-Three tabs:
-  1. Span Tracer  — waterfall view of agent runs + trajectory steps from SQLite
-  2. Skills       — browse and run any registered AgentDefinition
-  3. Clinical Data — browse members, HEDIS gaps, claims, labs, outreach from the clinical store
+Five tabs:
+  1. Agents       — registry of all registered agents with judge scores, golden dataset coverage, and run form
+  2. Span Tracer  — waterfall view of agent runs + trajectory steps from SQLite
+  3. AIGov        — obligation status per agent × obligation × enforcement point
+  4. Eval Monitor — offline + production eval scores and HITL review queue
+  5. Clinical Data — browse members, HEDIS gaps, claims, labs, outreach from the clinical store
 
 Run:
     cd praktor.ai
@@ -259,7 +261,7 @@ def _render_run_detail(run: dict):
 
 
 # ---------------------------------------------------------------------------
-# Tab 2: Skills (run agents)
+# Tab 1: Agents (registry + golden coverage + judge scores + run)
 # ---------------------------------------------------------------------------
 
 @st.cache_resource
@@ -270,6 +272,92 @@ def _get_all_definitions():
     router = get_global_router()
     # _agents maps name → Agent; expose the definition from each
     return {name: agent.definition for name, agent in router._agents.items()}
+
+
+_AGENT_SPECIFIC_CRITERIA: dict[str, list[str]] = {
+    "hedis_gap": [
+        "gap_identification_accuracy", "action_appropriateness",
+        "evidence_citation_quality", "safety_flag_coverage",
+    ],
+    "diabetes_hedis": [
+        "inertia_detection_accuracy", "escalation_ladder_correctness",
+        "gap_stacking_completeness", "evidence_anchor_quality",
+        "safety_exclusion_coverage",
+    ],
+}
+
+_STANDARD_CRITERIA = ["accuracy", "completeness", "relevance", "conciseness", "clarity"]
+
+_CLINICAL_AGENT_TYPES = {"hedis_gap", "diabetes_hedis"}
+
+
+@st.cache_data(ttl=60)
+def _load_agent_judge_scores(agent_name: str, hours: float = 168) -> dict[str, float | None]:
+    """Per-criterion average scores from judge_evals for a specific agent (last N hours)."""
+    db = _db_path()
+    if not Path(db).exists():
+        return {}
+    since = time.time() - hours * 3600
+    conn = sqlite3.connect(db)
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = [dict(r) for r in conn.execute(
+            "SELECT * FROM judge_evals WHERE agent_type = ? AND timestamp >= ? ORDER BY timestamp DESC LIMIT 500",
+            (agent_name, since),
+        ).fetchall()]
+    except Exception:
+        rows = []
+    finally:
+        conn.close()
+
+    if not rows:
+        return {}
+
+    result: dict[str, float | None] = {}
+    overall = [r["score"] for r in rows if r.get("score") is not None]
+    result["overall"] = sum(overall) / len(overall) if overall else None
+    result["n"] = len(rows)
+
+    all_criteria = _STANDARD_CRITERIA + _AGENT_SPECIFIC_CRITERIA.get(agent_name, [])
+    for crit in all_criteria:
+        vals = [r[crit] for r in rows if r.get(crit) is not None]
+        result[crit] = sum(vals) / len(vals) if vals else None
+    return result
+
+
+@st.cache_data(ttl=60)
+def _load_golden_counts() -> dict[str, int]:
+    """Return {agent_type: scoring_sample_count} for clinical agents."""
+    try:
+        from praktor.clinical.evaluation.golden_dataset import load_golden_samples
+    except Exception:
+        return {}
+    counts = {}
+    for atype in _CLINICAL_AGENT_TYPES:
+        try:
+            samples = load_golden_samples(agent_type=atype)
+            counts[atype] = sum(1 for s in samples if getattr(s, "measurement_year", 1) != 0)
+        except Exception:
+            counts[atype] = 0
+    return counts
+
+
+def _required_n_default() -> int:
+    try:
+        from praktor.clinical.evaluation.judge_optimizer import compute_required_n
+        return compute_required_n()
+    except Exception:
+        return 56
+
+
+def _score_color(v: float | None) -> str:
+    if v is None:
+        return "—"
+    if v >= 8.0:
+        return f"🟢 {v:.1f}"
+    if v >= 6.0:
+        return f"🟡 {v:.1f}"
+    return f"🔴 {v:.1f}"
 
 
 def _field_input(field_name: str, field_info, key_prefix: str) -> Any:
@@ -304,9 +392,12 @@ def _field_input(field_name: str, field_info, key_prefix: str) -> Any:
     return st.text_input(title, value=str(default) if default else "", key=key, help=help_text)
 
 
-def tab_skills():
-    st.subheader("Skills")
-    st.caption("Select an agent, fill in its inputs, and run it directly in the browser.")
+def tab_agents():
+    st.subheader("Agent Registry")
+    st.caption(
+        "All registered agents — configuration, golden dataset coverage, "
+        "judge scores (last 7 days), and an inline run form."
+    )
 
     try:
         definitions = _get_all_definitions()
@@ -318,54 +409,119 @@ def tab_skills():
         st.warning("No agents registered.")
         return
 
-    selected = st.selectbox(
-        "Agent",
-        list(definitions.keys()),
-        format_func=lambda n: n.replace("_", " ").title(),
-    )
+    golden_counts = _load_golden_counts()
+    req_n = _required_n_default()
 
-    defn = definitions[selected]
+    # ── summary metrics ───────────────────────────────────────────────────────
+    n_clinical = sum(1 for n in definitions if n in _CLINICAL_AGENT_TYPES)
+    adequate = sum(1 for t, cnt in golden_counts.items() if cnt >= req_n)
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Registered Agents", len(definitions))
+    m2.metric("Clinical Agents", n_clinical)
+    m3.metric("With Golden Data", len(golden_counts))
+    m4.metric("Sample Adequate", f"{adequate}/{len(golden_counts)}" if golden_counts else "—")
 
-    with st.expander("Agent definition", expanded=False):
-        st.markdown(f"**Model:** `{defn.llm_model}`")
-        st.markdown(f"**Memory:** `{defn.memory_policy.name}`")
-        st.markdown(f"**Max steps:** `{defn.max_steps}`")
-        if defn.tools:
-            st.markdown(f"**Tools:** {', '.join(f'`{t}`' for t in defn.tools)}")
-        if defn.improvement_passes:
-            st.markdown(f"**Improvement passes:** {len(defn.improvement_passes)}")
-        st.caption("Prompt template:")
-        st.code(defn.prompt_template[:500] + ("…" if len(defn.prompt_template) > 500 else ""), language="text")
+    st.divider()
 
-    st.markdown("**Inputs**")
-    schema = defn.input_schema
-    payload: dict[str, Any] = {}
+    if st.button("Refresh scores", key="refresh_agents"):
+        st.cache_data.clear()
+        st.rerun()
 
-    with st.form(key=f"agent_form_{selected}"):
-        for fname, finfo in schema.model_fields.items():
-            val = _field_input(fname, finfo, key_prefix=selected)
-            if val is not None:
-                payload[fname] = val
+    # ── per-agent cards ───────────────────────────────────────────────────────
+    for name in sorted(definitions.keys()):
+        defn = definitions[name]
+        scores = _load_agent_judge_scores(name)
+        n_golden = golden_counts.get(name)
+        is_clinical = name in _CLINICAL_AGENT_TYPES
 
-        model_override = st.text_input(
-            "Model override (optional)",
-            value="",
-            placeholder=defn.llm_model,
-            key=f"{selected}_model_override",
-        )
-        submitted = st.form_submit_button("Run agent", width="stretch", type="primary")
+        overall_badge = _score_color(scores.get("overall"))
+        n_evals = scores.get("n", 0)
+        sample_badge = "—"
+        if is_clinical and n_golden is not None:
+            sample_badge = (
+                f"✅ {n_golden}/{req_n}" if n_golden >= req_n
+                else f"⚠️ {n_golden}/{req_n}"
+            )
 
-    if submitted:
-        payload["agent_type"] = selected
-        payload.setdefault("session_id", "ui-" + str(int(time.time())))
-        payload.setdefault("history", "")
+        with st.expander(
+            f"🤖 **{name.replace('_', ' ').title()}** "
+            f"· `{defn.llm_model}` "
+            f"· Judge: {overall_badge} ({n_evals} evals) "
+            f"· Samples: {sample_badge}",
+            expanded=False,
+        ):
+            col_meta, col_judges = st.columns([1, 2])
 
-        # Optionally override model
-        if model_override.strip():
-            import dataclasses
-            defn = dataclasses.replace(defn, llm_model=model_override.strip())
+            # ── configuration ─────────────────────────────────────────────────
+            with col_meta:
+                st.markdown("**Configuration**")
+                st.markdown(f"- Model: `{defn.llm_model}`")
+                st.markdown(f"- Memory: `{defn.memory_policy.name}`")
+                st.markdown(f"- Max steps: `{defn.max_steps}`")
+                if defn.tools:
+                    st.markdown(f"- Tools: {', '.join(f'`{t}`' for t in defn.tools)}")
+                if defn.improvement_passes:
+                    st.markdown(f"- Improvement passes: {len(defn.improvement_passes)}")
 
-        _run_agent(defn, payload)
+            # ── judge scores ──────────────────────────────────────────────────
+            with col_judges:
+                st.markdown(f"**Judge Scores** (last 7 days · {n_evals} evals)")
+                if scores:
+                    st.markdown("*Standard criteria:*")
+                    std_cols = st.columns(5)
+                    for col, crit in zip(std_cols, _STANDARD_CRITERIA):
+                        v = scores.get(crit)
+                        col.metric(crit.title(), f"{v:.1f}" if v is not None else "—")
+
+                    spec = _AGENT_SPECIFIC_CRITERIA.get(name, [])
+                    if spec:
+                        st.markdown("*Agent-specific criteria:*")
+                        spec_cols = st.columns(len(spec))
+                        for i, crit in enumerate(spec):
+                            v = scores.get(crit)
+                            label = crit.replace("_", " ").replace("accuracy", "acc").title()
+                            spec_cols[i].metric(label, f"{v:.1f}" if v is not None else "—")
+                else:
+                    st.info("No judge evals in the last 7 days. Run the agent or `python -m praktor eval`.")
+
+            # ── golden dataset (clinical only) ────────────────────────────────
+            if is_clinical:
+                st.divider()
+                st.markdown("**Golden Dataset**")
+                g1, g2, g3 = st.columns(3)
+                g1.metric("Samples", n_golden if n_golden is not None else 0)
+                g2.metric("Required (80% power, δ=0.5)", req_n)
+                if n_golden is not None and n_golden >= req_n:
+                    g3.metric("Status", "Adequate ✅")
+                else:
+                    need = req_n - (n_golden or 0)
+                    g3.metric("Status", f"Need {need} more ⚠️")
+
+            # ── run form ──────────────────────────────────────────────────────
+            st.divider()
+            st.markdown("**Run this agent**")
+            schema = defn.input_schema
+            payload: dict[str, Any] = {}
+            with st.form(key=f"agent_form_{name}"):
+                for fname, finfo in schema.model_fields.items():
+                    val = _field_input(fname, finfo, key_prefix=name)
+                    if val is not None:
+                        payload[fname] = val
+                model_override = st.text_input(
+                    "Model override (optional)", value="",
+                    placeholder=defn.llm_model, key=f"{name}_model_override",
+                )
+                submitted = st.form_submit_button("Run agent", width="stretch", type="primary")
+
+            if submitted:
+                payload["agent_type"] = name
+                payload.setdefault("session_id", "ui-" + str(int(time.time())))
+                payload.setdefault("history", "")
+                run_defn = defn
+                if model_override.strip():
+                    import dataclasses
+                    run_defn = dataclasses.replace(defn, llm_model=model_override.strip())
+                _run_agent(run_defn, payload)
 
 
 def _run_agent(defn, payload: dict):
@@ -1026,23 +1182,23 @@ def main():
     st.caption("General-purpose agentic framework · ReAct · OTel · Prometheus · Grafana")
 
     tab1, tab2, tab3, tab4, tab5 = st.tabs([
-        "📡 Span Tracer", "🤖 Skills", "🏥 Clinical Data", "🛡️ AIGov", "📊 Eval Monitor",
+        "🤖 Agents", "📡 Span Tracer", "🛡️ AIGov", "📊 Eval Monitor", "🏥 Clinical Data",
     ])
 
     with tab1:
-        tab_tracer()
+        tab_agents()
 
     with tab2:
-        tab_skills()
+        tab_tracer()
 
     with tab3:
-        tab_documents()
-
-    with tab4:
         tab_aigov()
 
-    with tab5:
+    with tab4:
         tab_eval_monitor()
+
+    with tab5:
+        tab_documents()
 
 
 if __name__ == "__main__":
