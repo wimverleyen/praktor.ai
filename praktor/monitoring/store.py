@@ -69,7 +69,9 @@ CREATE TABLE IF NOT EXISTS trajectory_steps (
     input_tokens  INTEGER DEFAULT 0,
     output_tokens INTEGER DEFAULT 0,
     cached      INTEGER DEFAULT 0,
-    error       TEXT
+    error       TEXT,
+    prompt_text TEXT,
+    output_text TEXT
 );
 
 CREATE TABLE IF NOT EXISTS judge_evals (
@@ -96,8 +98,10 @@ CREATE TABLE IF NOT EXISTS judge_evals (
     gap_stacking_completeness      REAL,
     evidence_anchor_quality        REAL,
     safety_exclusion_coverage      REAL,
-    reasoning       TEXT,
-    question        TEXT,
+    reasoning           TEXT,
+    question            TEXT,
+    judge_prompt_text   TEXT,
+    judge_response_text TEXT,
     timestamp       REAL    NOT NULL
 );
 
@@ -192,6 +196,8 @@ class JudgeEvalRecord:
     safety_exclusion_coverage: float | None = None
     reasoning: str = ""
     question: str = ""
+    judge_prompt_text: str | None = None    # fully rendered judge prompt
+    judge_response_text: str | None = None  # raw LLM response from the judge
 
 
 @dataclass
@@ -241,6 +247,22 @@ class MonitoringStore:
     def _init_schema(self) -> None:
         with self._connect() as conn:
             conn.executescript(_SCHEMA)
+        self._migrate()
+
+    def _migrate(self) -> None:
+        """Add columns introduced after the initial schema without dropping existing data."""
+        migrations = [
+            ("trajectory_steps", "prompt_text", "TEXT"),
+            ("trajectory_steps", "output_text", "TEXT"),
+            ("judge_evals", "judge_prompt_text", "TEXT"),
+            ("judge_evals", "judge_response_text", "TEXT"),
+        ]
+        with self._connect() as conn:
+            for table, col, typ in migrations:
+                try:
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
+                except sqlite3.OperationalError:
+                    pass  # column already exists
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self._db_path, check_same_thread=False)
@@ -278,14 +300,16 @@ class MonitoringStore:
                 conn.executemany(
                     """INSERT INTO trajectory_steps
                        (run_id, step, kind, tool_name, latency_ms,
-                        input_tokens, output_tokens, cached, error)
-                       VALUES (?,?,?,?,?,?,?,?,?)""",
+                        input_tokens, output_tokens, cached, error,
+                        prompt_text, output_text)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
                     [
                         (
                             run_id, step["step"], step["kind"],
                             step.get("tool_name"), step.get("latency_ms", 0),
                             step.get("input_tokens", 0), step.get("output_tokens", 0),
                             int(step.get("cached", False)), step.get("error"),
+                            step.get("prompt_text"), step.get("output_text"),
                         )
                         for step in record.trajectory
                     ],
@@ -306,8 +330,10 @@ class MonitoringStore:
                     inertia_detection_accuracy, escalation_ladder_correctness,
                     gap_stacking_completeness, evidence_anchor_quality,
                     safety_exclusion_coverage,
-                    reasoning, question, timestamp)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    reasoning, question,
+                    judge_prompt_text, judge_response_text,
+                    timestamp)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     record.session_id, record.agent_type, record.judge_type,
                     record.version_id, record.score,
@@ -318,7 +344,9 @@ class MonitoringStore:
                     record.inertia_detection_accuracy, record.escalation_ladder_correctness,
                     record.gap_stacking_completeness, record.evidence_anchor_quality,
                     record.safety_exclusion_coverage,
-                    record.reasoning, record.question, record.timestamp,
+                    record.reasoning, record.question,
+                    record.judge_prompt_text, record.judge_response_text,
+                    record.timestamp,
                 ),
             )
 

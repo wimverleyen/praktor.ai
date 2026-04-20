@@ -39,6 +39,8 @@ class BaseJudge(ABC):
         self._model = model or self._default_model
         self._eval_adapter = None
         self._compare_adapter = None
+        self._last_eval_prompt: str | None = None    # rendered prompt from last evaluate()
+        self._last_eval_response: str | None = None  # raw LLM output from last evaluate()
         self._init_adapters()
 
     def _init_adapters(self) -> None:
@@ -76,14 +78,21 @@ class BaseJudge(ABC):
             if isinstance(recommendation, dict)
             else str(recommendation)
         )
+        invoke_data = {
+            "recommendation": rec_text,
+            "member_context": member_context,
+            "outcome": outcome or "pending",
+        }
         try:
-            response = await self._eval_adapter.ainvoke({
-                "recommendation": rec_text,
-                "member_context": member_context,
-                "outcome": outcome or "pending",
-            })
+            self._last_eval_prompt = self._eval_adapter.render(invoke_data)
+        except Exception:
+            self._last_eval_prompt = None
+        try:
+            response = await self._eval_adapter.ainvoke(invoke_data)
+            self._last_eval_response = response
             return self._parse_score(response, recommendation)
         except Exception as e:
+            self._last_eval_response = None
             log.error(f"{self.__class__.__name__}.evaluate failed: {e}")
             return self._neutral_score(str(e))
 

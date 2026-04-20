@@ -101,6 +101,7 @@ class TrajectoryEvent:
     __slots__ = (
         "step", "kind", "latency_ms", "input_tokens",
         "output_tokens", "tool_name", "cached", "error",
+        "prompt_text", "output_text",
     )
 
     def __init__(
@@ -113,6 +114,8 @@ class TrajectoryEvent:
         tool_name: str | None = None,
         cached: bool = False,
         error: str | None = None,
+        prompt_text: str | None = None,
+        output_text: str | None = None,
     ):
         self.step = step
         self.kind = kind                    # "llm_call" | "tool_call" | "improvement_pass"
@@ -122,6 +125,8 @@ class TrajectoryEvent:
         self.tool_name = tool_name
         self.cached = cached
         self.error = error
+        self.prompt_text = prompt_text      # fully rendered prompt sent to the LLM
+        self.output_text = output_text      # full LLM response (accumulated from stream)
 
 
 # ---------------------------------------------------------------------------
@@ -262,6 +267,8 @@ class LLMCallSpan:
         self.output_tokens = 0
         self.input_tokens = 0
         self.cached = False
+        self.prompt_text: str | None = None   # set by AsyncLLMAdapter before streaming
+        self.output_text: str | None = None   # set by AsyncLLMAdapter after streaming
 
     def __enter__(self) -> "LLMCallSpan":
         self._start = time.time()
@@ -302,4 +309,6 @@ class LLMCallSpan:
             tool_name=self._tool_name,
             cached=self.cached,
             error=error,
+            prompt_text=self.prompt_text,
+            output_text=self.output_text,
         ))

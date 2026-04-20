@@ -95,6 +95,8 @@ async def judge_run(run: dict) -> bool:
             member_context=member_context,
             outcome="pending",
         )
+        judge_prompt_text = getattr(judge, "_last_eval_prompt", None)
+        judge_response_text = getattr(judge, "_last_eval_response", None)
     except Exception as e:
         log.warning(f"production_eval: judge failed for session={session_id}: {e}")
         return False
@@ -145,6 +147,8 @@ async def judge_run(run: dict) -> bool:
         safety_exclusion_coverage=domain.get("safety_exclusion_coverage"),
         reasoning=getattr(score, "reasoning", ""),
         question=f"production:{session_id}",
+        judge_prompt_text=judge_prompt_text,
+        judge_response_text=judge_response_text,
     )
 
     if registry._store:

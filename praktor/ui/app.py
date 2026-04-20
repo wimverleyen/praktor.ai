@@ -146,6 +146,22 @@ def _query_trajectory(run_id: int) -> list[dict]:
         conn.close()
 
 
+def _query_judge_evals_for_session(session_id: str) -> list[dict]:
+    db = _db_path()
+    if not Path(db).exists():
+        return []
+    conn = sqlite3.connect(db)
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute(
+            "SELECT * FROM judge_evals WHERE session_id = ? ORDER BY timestamp DESC LIMIT 5",
+            (session_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
 def _distinct_agents() -> list[str]:
     db = _db_path()
     if not Path(db).exists():
@@ -226,38 +242,64 @@ def _render_run_detail(run: dict):
     steps = _query_trajectory(run["id"])
     if not steps:
         st.caption("No trajectory steps recorded for this run.")
-        return
+    else:
+        st.markdown("**Trajectory**")
+        max_latency = sum(s["latency_ms"] for s in steps) or 1
 
-    st.markdown("**Trajectory**")
+        for step in steps:
+            icon = _kind_icon(step["kind"])
+            label_parts = [f"{icon} step {step['step']} · **{step['kind']}**"]
+            if step.get("tool_name"):
+                label_parts.append(f"tool=`{step['tool_name']}`")
+            label_parts.append(_fmt_ms(step["latency_ms"]))
+            if step.get("output_tokens"):
+                label_parts.append(f"{step['output_tokens']} tok out")
+            if step.get("cached"):
+                label_parts.append("💾 cached")
+            if step.get("error"):
+                label_parts.append("🔴 error")
+            has_prompt = bool(step.get("prompt_text") or step.get("output_text"))
+            if has_prompt:
+                label_parts.append("📄 prompt")
 
-    total_ms = max(s["latency_ms"] for s in steps) if steps else 1
-    max_latency = sum(s["latency_ms"] for s in steps) or 1
+            pct = min(step["latency_ms"] / max_latency, 1.0)
 
-    for step in steps:
-        icon = _kind_icon(step["kind"])
-        label_parts = [f"{icon} step {step['step']} · **{step['kind']}**"]
-        if step.get("tool_name"):
-            label_parts.append(f"tool=`{step['tool_name']}`")
-        label_parts.append(_fmt_ms(step["latency_ms"]))
-        if step.get("output_tokens"):
-            label_parts.append(f"{step['output_tokens']} tok out")
-        if step.get("cached"):
-            label_parts.append("💾 cached")
-        if step.get("error"):
-            label_parts.append("🔴 error")
+            col_label, col_bar = st.columns([3, 2])
+            with col_label:
+                st.markdown(" · ".join(label_parts))
+            with col_bar:
+                bar_color = "#d9534f" if step.get("error") else ("#5cb85c" if step.get("cached") else "#5bc0de")
+                st.markdown(
+                    f'<div style="background:{bar_color};height:16px;width:{pct*100:.0f}%;'
+                    f'border-radius:3px;margin-top:4px"></div>',
+                    unsafe_allow_html=True,
+                )
 
-        pct = min(step["latency_ms"] / max_latency, 1.0)
+            if step.get("prompt_text"):
+                with st.expander(f"Agent prompt — step {step['step']}", expanded=False):
+                    st.code(step["prompt_text"], language="text")
+            if step.get("output_text"):
+                with st.expander(f"Agent output — step {step['step']}", expanded=False):
+                    st.markdown(step["output_text"])
 
-        col_label, col_bar = st.columns([3, 2])
-        with col_label:
-            st.markdown(" · ".join(label_parts))
-        with col_bar:
-            bar_color = "#d9534f" if step.get("error") else ("#5cb85c" if step.get("cached") else "#5bc0de")
-            st.markdown(
-                f'<div style="background:{bar_color};height:16px;width:{pct*100:.0f}%;'
-                f'border-radius:3px;margin-top:4px"></div>',
-                unsafe_allow_html=True,
-            )
+    # ── Judge evaluation prompts ──────────────────────────────────────────
+    judge_evals = _query_judge_evals_for_session(run["session_id"])
+    if judge_evals:
+        st.markdown("**Judge Evaluation**")
+        for je in judge_evals:
+            score_str = f"overall={je['score']:.2f}" if je.get("score") is not None else ""
+            with st.expander(
+                f"🧑‍⚖️ {je['judge_type']} judge · {score_str} · {je['agent_type']}",
+                expanded=False,
+            ):
+                if je.get("judge_prompt_text"):
+                    st.markdown("**Judge prompt (rendered)**")
+                    st.code(je["judge_prompt_text"], language="text")
+                if je.get("judge_response_text"):
+                    st.markdown("**Judge raw response**")
+                    st.code(je["judge_response_text"], language="json")
+                if je.get("reasoning"):
+                    st.markdown(f"**Reasoning:** {je['reasoning']}")
 
 
 # ---------------------------------------------------------------------------

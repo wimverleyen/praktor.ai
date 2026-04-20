@@ -126,6 +126,12 @@ class AsyncLLMAdapter:
         call_span: optional LLMCallSpan context manager from core.observability.
                    If provided, latency and cache status are recorded on it.
         """
+        if call_span is not None:
+            try:
+                call_span.prompt_text = self.render(data)
+            except Exception:
+                pass
+
         if self._use_cache:
             key = self._cache_key(data)
             cached = _cache.get(key)
@@ -134,6 +140,7 @@ class AsyncLLMAdapter:
                 if call_span is not None:
                     call_span.cached = True
                     call_span.output_tokens = len(cached.split())
+                    call_span.output_text = cached
                 return cached
 
         result = await _invoke_with_retry(self._chain, data)
@@ -143,6 +150,7 @@ class AsyncLLMAdapter:
 
         if call_span is not None:
             call_span.output_tokens = len(result.split())
+            call_span.output_text = result
 
         return result
 
@@ -157,6 +165,12 @@ class AsyncLLMAdapter:
         call_span: optional LLMCallSpan context manager from core.observability.
                    If provided, token count and cache status are recorded on it.
         """
+        if call_span is not None:
+            try:
+                call_span.prompt_text = self.render(data)
+            except Exception:
+                pass
+
         if self._use_cache:
             key = self._cache_key(data)
             cached = _cache.get(key)
@@ -165,6 +179,7 @@ class AsyncLLMAdapter:
                 if call_span is not None:
                     call_span.cached = True
                     call_span.output_tokens = len(cached.split())
+                    call_span.output_text = cached
                 yield cached
                 return
 
@@ -187,5 +202,6 @@ class AsyncLLMAdapter:
             joined = "".join(full_response)
             if call_span is not None:
                 call_span.output_tokens = len(joined.split())
+                call_span.output_text = joined
             if self._use_cache:
                 _cache.set(self._cache_key(data), joined, expire=CACHE_TTL)

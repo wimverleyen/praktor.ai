@@ -72,6 +72,8 @@ def _span_to_run_record(
             "output_tokens": e.output_tokens,
             "cached": e.cached,
             "error": e.error,
+            "prompt_text": e.prompt_text,
+            "output_text": e.output_text,
         }
         for e in trajectory
     ]
