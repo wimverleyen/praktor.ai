@@ -397,47 +397,79 @@ python -m praktor prompt activate cover_letter def456
 
 ## LLM-as-judge evaluation
 
-Score any agent response on four criteria (0–10 each): relevance, accuracy, completeness, conciseness.
+Every agent response is scored on five criteria (0–10 each):
+
+| Criterion | Question answered |
+|-----------|-------------------|
+| **Accuracy** | Is the answer correct? |
+| **Completeness** | Is all required information included? |
+| **Relevance** | Does the answer address the user's question? |
+| **Conciseness** | Is the response appropriately brief? |
+| **Clarity** | Is it clear and easy to understand? |
+
+The `overall` score is the mean of all five. Clinical agents add domain-specific criteria on top (see below).
 
 ```python
-from core.judge import JudgeEvaluator
+from praktor.evaluation.general_judge import GeneralJudge
 
-judge = JudgeEvaluator(model="llama3:8b")
+judge = GeneralJudge()
 score = await judge.evaluate(
-    question="What is RAG?",
-    response=agent_response,
-    expected=reference_answer,   # optional
+    recommendation=agent_response,
+    member_context="Cover letter for a senior engineer role at a startup",
+    outcome=None,
 )
-print(score.summary())
-# → overall=7.80/10  rel=8.0  acc=8.0  cmp=7.0  con=8.0  | Good structured answer.
+print(score.overall)
+# → 7.80   (mean of accuracy + completeness + relevance + conciseness + clarity)
+print(score.accuracy, score.completeness, score.relevance, score.conciseness, score.clarity)
+# → 8.0  7.0  8.0  8.0  7.5
 
 # Head-to-head comparison
-cmp = await judge.compare(question, response_a, response_b)
-print(cmp["winner"], cmp["reasoning"])
+result = await judge.compare(recommendation_a, recommendation_b, member_context)
+print(result["winner"], result["reasoning"])
 ```
 
-Scores are recorded back to `PromptRegistry.record_eval()` and the monitoring SQLite store.
+### Clinical judges add domain-specific criteria
 
-### Continuous calibration loop (clinical agents)
+Clinical agents use specialist judges that extend the base five with domain criteria:
 
-For the HEDIS and diabetes agents, judges can be automatically calibrated against a golden dataset and kept in sync with production quality:
+**HEDIS gap agent** (`HEDISJudge`, 9 criteria total):
+- `gap_identification_accuracy` — are the right gaps flagged?
+- `action_appropriateness` — are recommended actions clinically sound?
+- `evidence_citation_quality` — are claims backed by evidence?
+- `safety_flag_coverage` — are safety risks surfaced?
+
+**Diabetes HEDIS agent** (`DiabetesHEDISJudge`, 10 criteria total):
+- `inertia_detection_accuracy` — is clinical inertia correctly identified?
+- `escalation_ladder_correctness` — is the escalation step right?
+- `gap_stacking_completeness` — are all stacked gaps addressed?
+- `evidence_anchor_quality` — are lab values and thresholds correctly cited?
+- `safety_exclusion_coverage` — are exclusion criteria properly applied?
+
+### Continuous calibration loop
+
+Judges are calibrated against a golden dataset before the first eval run and kept in sync as new production samples are promoted:
 
 ```bash
-# 1. Calibrate judges against 20 built-in golden samples
+# Calibrate all judges (hedis_gap, diabetes_hedis, and general)
 python -m praktor judge-optimize
 
-# 2. Run offline eval to verify the calibrated judges
-python -m praktor eval --dry-run
+# Calibrate one specific judge
+python -m praktor judge-optimize --agent diabetes_hedis
+python -m praktor judge-optimize --agent general   # all 7 general agents share one judge
 
-# 3. Run 10 synthetic demo cases and AI-judge every output
+# Run offline eval to verify calibrated judges against the golden dataset
+python -m praktor eval --dry-run                   # all agents
+python -m praktor eval --agent diabetes_hedis      # one agent
+
+# Run 10 synthetic demo cases and AI-judge every output
 python -m praktor demo
 
-# 4. After a care manager approves a run in the HITL UI, promote it to the golden dataset
+# After a care manager approves a run in the HITL UI, promote it to the golden dataset
 python -m praktor promote <session_id>
-# → every 3 promotions, recalibration runs automatically if the new judge is better
+# → every 3 promotions, recalibration runs automatically if the new judge scores better
 ```
 
-Calibrated prompts are stored in `PromptRegistry` (keyed `judge_hedis` / `judge_diabetes_hedis`) and loaded automatically by `create_calibrated_judge()` on every eval and demo run. Custom promoted samples are stored at `~/.praktor/golden_custom.jsonl`.
+Calibrated prompts are stored in `PromptRegistry` (keys: `judge_hedis`, `judge_diabetes_hedis`, `judge_general`) and loaded automatically by `create_calibrated_judge()` on every eval and demo run. Custom promoted samples are stored at `~/.praktor/golden_custom.jsonl`.
 
 ---
 
@@ -733,7 +765,7 @@ praktor.ai/
 │   │   ├── tool.py              # Tool protocol + ToolRegistry
 │   │   ├── observability.py     # OTel spans + TrajectoryEvent per LLM/tool call
 │   │   ├── prompt_registry.py   # JSONL version store (content-addressed)
-│   │   ├── judge.py             # LLM-as-judge: 4-criterion scoring + comparison
+│   │   ├── judge.py             # LLM-as-judge: 5-criterion scoring + comparison
 │   │   └── prompt_optimizer.py  # Native COPRO-style + optional DSPy optimizer
 │   │
 │   ├── monitoring/              # Continuous monitoring data products
