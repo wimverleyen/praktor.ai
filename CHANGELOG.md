@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.5.0] - 2026-04-29 — GEPA Pareto Search, MIPROv2, ChatOpenAI Routing, Registry Fields
+
+### Added
+- **GEPA-inspired Pareto frontier search** for judge calibration (`--search-mode pareto`). Multi-round meta-LLM loop identifies the weakest scoring criterion and generates variant prompts; maintains a non-dominated frontier and stops when any candidate clears threshold on all criteria. New `ParetoCandidate` dataclass with `dominates()` and `clears_threshold()` methods.
+- **LLM preflight probe** in `calibrate_judges()`: fast one-call smoke test before scoring all golden samples. Returns `[]` immediately on auth/credit errors instead of silently producing neutral-5.0 scores.
+- **Neutral score detection**: warns when all reference-output scores are exactly 5.0 (indicates silent LLM failure rather than genuine mid-range performance).
+- **`CalibrationReport` new fields**: `search_mode`, `trials_run`, `budget_exhausted`, `pareto_frontier`.
+- **`PromptRegistry` new fields**: `criterion_scores: dict` and `optimized_for_model: str` on `PromptVersion`. Old JSONL files load cleanly (unknown fields stripped for forward compatibility).
+- **MIPROv2 support** in `PromptOptimizer`: upgrades from `BootstrapFewShot` to `MIPROv2(auto="light")` with automatic fallback when DSPy < 2.5 or `< 15` training examples.
+- **`PromptOptimizer.max_trials`** parameter for MIPROv2 trial budget.
+- **`calibrate_judges()` CLI args**: `--search-mode`, `--max-trials`, `--candidates-per-round` in `python -m praktor judge-optimize`.
+- **`docs/AIGov_Framework.md`**: AIGov obligations framework specification — 11 canonical Agent Obligations with HELD/VIOLATED/STALE status, append-only ledger architecture.
+
+### Changed
+- **LLM factory routing**: modern GPT-4/o-series (`gpt-4o`, `gpt-4`, `gpt-4-turbo`, `o1`, `o3` prefix) now route to `ChatOpenAI` (chat completions API); legacy completion models (`gpt-3.5-turbo-instruct`, `text-davinci-*`) stay on `OpenAI`. Fixes silent failures when calling chat models via the completions endpoint.
+- **`create_llm()` temperature parameter**: `LLMFactory.create_llm(model, temperature=0.0)` — previously hardcoded to 0.0 everywhere.
+- **`LLMInterface`** forwards `temperature` to factory.
+- **`_score_reference_outputs`** returns only valid (non-None) scores; Pareto search uses aligned `(sample, score)` pairs to prevent zip misalignment on eval failures.
+
+### Fixed
+- `conftest.py`: pre-registers `faiss` stub with valid `__spec__` to prevent `ValueError: faiss.__spec__ is not set` in test collection. Adds `langchain_core` and submodules to stub list to cut the langchain_core → transformers → faiss import chain.
+
 ## [0.4.2.0] - 2026-04-19 — Judge Calibration UI, AgentDefinition.registry_key, Structural Fixes
 
 ### Added

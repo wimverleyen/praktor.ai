@@ -92,7 +92,7 @@ class AsyncLLMAdapter:
         self._temperature = temperature
         self._use_cache = temperature == 0.0
         self._prompt = PromptTemplate.from_template(prompt_template)
-        self._llm = LLMFactory().create_llm(model)
+        self._llm = LLMFactory().create_llm(model, temperature=temperature)
         self._chain = self._prompt | self._llm
 
     def _cache_key(self, data: dict) -> str:

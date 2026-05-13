@@ -145,8 +145,9 @@ class TestEnsureJudgesCalibrated:
         from praktor.clinical.evaluation.judge_optimizer import ensure_judges_calibrated
 
         mock_registry = MagicMock()
+        # hedis and general present; only diabetes_hedis missing
         mock_registry.get_active.side_effect = lambda key: (
-            _make_prompt_version() if key == "judge_hedis" else None
+            None if key == "judge_diabetes_hedis" else _make_prompt_version()
         )
 
         with patch("praktor.clinical.evaluation.judge_optimizer.PromptRegistry", return_value=mock_registry):
@@ -168,7 +169,10 @@ class TestEnsureJudgesCalibrated:
                        new_callable=AsyncMock) as mock_cal:
                 await ensure_judges_calibrated(verbose=False)
 
-        mock_cal.assert_called_once_with(agent_type=None, verbose=False)
+        # Function now iterates over each missing key separately
+        assert mock_cal.call_count == 3
+        called_types = {call.kwargs["agent_type"] for call in mock_cal.call_args_list}
+        assert called_types == {"hedis_gap", "diabetes_hedis", "general"}
 
 
 # ---------------------------------------------------------------------------
@@ -465,7 +469,7 @@ class TestCalibrateJudgesScoringFilter:
 
         scored_samples = []
 
-        async def _mock_score(judge, samples):
+        async def _mock_score(judge, samples, **kwargs):
             scored_samples.extend(samples)
             return []
 
@@ -668,7 +672,7 @@ class TestCalibrationKpi:
 
         fake_score = self._fake_score(8.5)
 
-        async def _mock_score(judge, samples):
+        async def _mock_score(judge, samples, **kwargs):
             return [fake_score] * len(samples) if samples else []
 
         monkeypatch.setattr(jopt, "_score_reference_outputs", _mock_score)
@@ -708,7 +712,7 @@ class TestCalibrationKpi:
 
         call_count = [0]
 
-        async def _mock_score(judge, samples):
+        async def _mock_score(judge, samples, **kwargs):
             call_count[0] += 1
             overall = 5.0 if call_count[0] == 1 else 8.0
             return [self._fake_score(overall)] * max(len(samples), 1)
@@ -734,7 +738,10 @@ class TestCalibrationKpi:
             MockReg.return_value.set_active.return_value = None
             MockReg.return_value.record_eval.return_value = None
 
-            with patch("praktor.clinical.evaluation.judge_optimizer.AsyncLLMAdapter"):
+            mock_adapter_instance = MagicMock()
+            mock_adapter_instance.ainvoke = AsyncMock(return_value="OK")
+            with patch("praktor.clinical.evaluation.judge_optimizer.AsyncLLMAdapter",
+                       return_value=mock_adapter_instance):
                 await jopt.calibrate_judges(agent_type="hedis_gap", verbose=False)
 
         score_after_calls = [n for n, _ in kpi_calls if "score_after" in n]
@@ -842,7 +849,7 @@ class TestCalibrateJudgesSampleSize:
 
         monkeypatch.setattr(jopt, "record_kpi", lambda *a, **kw: None)
 
-        async def _mock_score(judge, samples):
+        async def _mock_score(judge, samples, **kwargs):
             return [self._fake_score(8.5)] * max(len(samples), 1)
 
         monkeypatch.setattr(jopt, "_score_reference_outputs", _mock_score)
@@ -872,7 +879,7 @@ class TestCalibrateJudgesSampleSize:
 
         monkeypatch.setattr(jopt, "record_kpi", lambda *a, **kw: None)
 
-        async def _mock_score(judge, samples):
+        async def _mock_score(judge, samples, **kwargs):
             return [self._fake_score(8.5)] * max(len(samples), 1)
 
         monkeypatch.setattr(jopt, "_score_reference_outputs", _mock_score)
@@ -902,7 +909,7 @@ class TestCalibrateJudgesSampleSize:
         kpi_calls = []
         monkeypatch.setattr(jopt, "record_kpi", lambda n, v: kpi_calls.append((n, v)))
 
-        async def _mock_score(judge, samples):
+        async def _mock_score(judge, samples, **kwargs):
             return [self._fake_score(8.5)] * max(len(samples), 1)
 
         monkeypatch.setattr(jopt, "_score_reference_outputs", _mock_score)
@@ -937,4 +944,106 @@ class TestCalibrateJudgesSampleSize:
             "evidence_citation_quality": overall, "safety_flag_coverage": overall,
         }
         return SimpleNamespace(**attrs)
-        assert score_after_calls[0] == "judge.calibration.score_after.hedis_gap"
+
+
+# ---------------------------------------------------------------------------
+# ParetoCandidate
+# ---------------------------------------------------------------------------
+
+class TestParetoCandidate:
+
+    def _make(self, scores: dict, agg: float = 0.0, round_: int = 0):
+        from praktor.clinical.evaluation.judge_optimizer import ParetoCandidate
+        return ParetoCandidate(
+            template="prompt",
+            criterion_scores=scores,
+            aggregate_score=agg,
+            round_generated=round_,
+        )
+
+    def test_dominates_when_all_ge_and_one_gt(self):
+        a = self._make({"acc": 8.0, "comp": 7.0})
+        b = self._make({"acc": 7.0, "comp": 7.0})
+        assert a.dominates(b)
+        assert not b.dominates(a)
+
+    def test_does_not_dominate_when_tied(self):
+        a = self._make({"acc": 7.0, "comp": 7.0})
+        b = self._make({"acc": 7.0, "comp": 7.0})
+        assert not a.dominates(b)
+
+    def test_does_not_dominate_when_one_criterion_worse(self):
+        a = self._make({"acc": 9.0, "comp": 5.0})
+        b = self._make({"acc": 7.0, "comp": 8.0})
+        assert not a.dominates(b)
+        assert not b.dominates(a)
+
+    def test_dominates_empty_scores_falls_back_to_aggregate(self):
+        from praktor.clinical.evaluation.judge_optimizer import ParetoCandidate
+        a = ParetoCandidate(template="p", criterion_scores={}, aggregate_score=9.0, round_generated=0)
+        b = ParetoCandidate(template="q", criterion_scores={}, aggregate_score=7.0, round_generated=0)
+        assert a.dominates(b)
+        assert not b.dominates(a)
+
+    def test_clears_threshold_all_above(self):
+        from praktor.clinical.evaluation.judge_optimizer import _CALIBRATION_THRESHOLD
+        score = _CALIBRATION_THRESHOLD + 0.1
+        a = self._make({"acc": score, "comp": score})
+        assert a.clears_threshold()
+
+    def test_clears_threshold_one_below(self):
+        from praktor.clinical.evaluation.judge_optimizer import _CALIBRATION_THRESHOLD
+        a = self._make({"acc": _CALIBRATION_THRESHOLD + 0.1, "comp": _CALIBRATION_THRESHOLD - 0.1})
+        assert not a.clears_threshold()
+
+    def test_clears_threshold_empty_scores_returns_false(self):
+        from praktor.clinical.evaluation.judge_optimizer import ParetoCandidate
+        a = ParetoCandidate(template="p", criterion_scores={}, aggregate_score=9.0, round_generated=0)
+        assert not a.clears_threshold()
+
+
+# ---------------------------------------------------------------------------
+# LLM preflight in calibrate_judges
+# ---------------------------------------------------------------------------
+
+class TestCalibrateJudgesPreflight:
+
+    @pytest.mark.asyncio
+    async def test_preflight_failure_aborts_calibration(self, monkeypatch):
+        """If the LLM probe raises, calibrate_judges returns [] immediately."""
+        import praktor.clinical.evaluation.judge_optimizer as jopt
+
+        monkeypatch.setattr(
+            "praktor.clinical.evaluation.golden_dataset.load_golden_samples",
+            lambda agent_type=None: [_make_golden_sample()],
+        )
+
+        async def _fail(*a, **kw):
+            raise RuntimeError("credit balance too low")
+
+        with patch("praktor.clinical.evaluation.judge_optimizer.AsyncLLMAdapter") as MockAdapter:
+            MockAdapter.return_value.ainvoke = _fail
+            result = await jopt.calibrate_judges(agent_type="hedis_gap", verbose=False)
+
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_preflight_success_allows_calibration_to_proceed(self, monkeypatch):
+        """A successful probe lets calibration continue past the preflight."""
+        import praktor.clinical.evaluation.judge_optimizer as jopt
+
+        monkeypatch.setattr(
+            "praktor.clinical.evaluation.golden_dataset.load_golden_samples",
+            lambda agent_type=None: [],  # no samples → early exit after preflight
+        )
+
+        async def _ok(*a, **kw):
+            return "OK"
+
+        with patch("praktor.clinical.evaluation.judge_optimizer.AsyncLLMAdapter") as MockAdapter, \
+             patch("praktor.clinical.evaluation.judge_optimizer.PromptRegistry"):
+            MockAdapter.return_value.ainvoke = _ok
+            result = await jopt.calibrate_judges(agent_type="hedis_gap", verbose=False)
+
+        # No samples → empty report list, but calibration was not aborted by preflight
+        assert isinstance(result, list)

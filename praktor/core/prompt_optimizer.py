@@ -119,12 +119,16 @@ class PromptOptimizer:
         judge: JudgeEvaluator | None = None,
         use_dspy: bool = True,
         store_dir: str | None = None,
+        max_trials: int = 20,
     ) -> None:
         self.agent_name = agent_name
         self.model = model
         self.registry = registry or PromptRegistry(store_dir)
         self.judge = judge or JudgeEvaluator(model=model)
         self._use_dspy = use_dspy
+        # max_trials is stored for Phase 2 Pareto search.
+        # In Phase 1, effective DSPy trial budget is controlled by auto="light" (~7 trials).
+        self.max_trials = max_trials
         self._meta_adapter = AsyncLLMAdapter(
             prompt_template=_META_PROMPT,
             model=model,
@@ -292,6 +296,14 @@ class PromptOptimizer:
             for ex in examples
         ]
 
+        # MIPROv2 requires enough examples for a meaningful train/val split.
+        if len(dspy_examples) < 15:
+            log.warning(
+                f"MIPROv2 requires 15+ examples for meaningful instruction search; "
+                f"got {len(dspy_examples)} — falling back to native optimizer."
+            )
+            raise ValueError("insufficient_examples_for_miprov2")
+
         # Define metric function
         def _metric(example, prediction, trace=None):
             response = getattr(prediction, "output", str(prediction))
@@ -309,7 +321,22 @@ class PromptOptimizer:
                 loop.close()
 
         program = dspy.Predict(sig)
-        optimizer = dspy.teleprompt.BootstrapFewShot(metric=_metric, max_bootstrapped_demos=3)
+        # MIPROv2 jointly optimizes instructions and few-shot demonstrations via
+        # Bayesian search. auto="light" runs ~7 trials — appropriate for small
+        # golden datasets. Switch to "medium" (~25 trials) when n >= 30.
+        # Do NOT pass num_trials alongside auto= — the preset owns the trial budget.
+        try:
+            optimizer = dspy.teleprompt.MIPROv2(
+                metric=_metric,
+                auto="light",
+                max_bootstrapped_demos=3,
+                max_labeled_demos=3,
+                requires_permission_to_run=False,
+            )
+        except (AttributeError, TypeError):
+            # DSPy version doesn't have MIPROv2 — fall back to BootstrapFewShot
+            log.warning("MIPROv2 not available in installed DSPy version — using BootstrapFewShot")
+            optimizer = dspy.teleprompt.BootstrapFewShot(metric=_metric, max_bootstrapped_demos=3)
 
         # Compile runs synchronously (DSPy internal)
         compiled = await asyncio.to_thread(
@@ -386,24 +413,32 @@ class PromptOptimizer:
     @staticmethod
     def _extract_dspy_prompt(compiled: Any, fallback: str) -> str:
         """
-        Pull the best prompt text out of a compiled DSPy predictor.
+        Pull the optimized instruction + few-shot demos from a compiled DSPy module.
 
-        DSPy stores few-shot demos in the predictor. We reconstruct a
-        plain template string that includes those demos as examples.
+        DSPy 2.5+: instruction lives at compiled.predictors()[0].signature.instructions
+        Older DSPy: falls back to reading compiled.demos only.
+        Both: appends few-shot examples block to the instruction text.
         """
+        instruction = fallback
+        try:
+            # DSPy 2.5+ attribute path (verify against dir(compiled) if this breaks)
+            instruction = compiled.predictors()[0].signature.instructions or fallback
+        except (AttributeError, IndexError, TypeError):
+            pass
+
         try:
             demos = compiled.demos if hasattr(compiled, "demos") else []
             if not demos:
-                return fallback
+                return instruction
 
             examples_block = "\n\n".join(
                 "Example:\n" + "\n".join(f"  {k}: {v}" for k, v in d.items() if k != "output")
                 + f"\n  → {d.get('output', '')}"
                 for d in demos[:3]
             )
-            return f"{fallback}\n\n{examples_block}"
+            return f"{instruction}\n\n{examples_block}"
         except Exception:
-            return fallback
+            return instruction
 
     def _format_feedback(self, examples: list[dict[str, Any]]) -> str:
         """Format examples+scores as readable feedback for the meta-prompt."""

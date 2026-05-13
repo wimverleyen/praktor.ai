@@ -18,7 +18,7 @@ import hashlib
 import json
 import os
 import difflib
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field, fields, asdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -42,6 +42,12 @@ class PromptVersion:
     avg_score: float | None = None   # running mean from judge evaluations
     eval_count: int = 0
     avg_latency_ms: float | None = None
+    # Per-criterion scores from the optimization run (Pareto search populates this).
+    # Empty dict on versions optimized before this field was added.
+    criterion_scores: dict = field(default_factory=dict)
+    # Model the optimization ran against. Empty string on pre-existing versions.
+    # Used to detect stale calibration when MODEL env var changes.
+    optimized_for_model: str = ""
 
     def short_id(self) -> str:
         return self.version_id[:8]
@@ -78,6 +84,8 @@ class PromptRegistry:
         template: str,
         notes: str = "",
         set_active: bool = False,
+        criterion_scores: dict | None = None,
+        optimized_for_model: str = "",
     ) -> PromptVersion:
         """
         Save a prompt template as a new version.
@@ -100,6 +108,8 @@ class PromptRegistry:
             created_at=datetime.now(timezone.utc).isoformat(),
             notes=notes,
             is_active=False,
+            criterion_scores=criterion_scores or {},
+            optimized_for_model=optimized_for_model,
         )
         self._append(agent_name, version)
         log.info(f"PromptRegistry: saved {version_id} for '{agent_name}'")
@@ -221,11 +231,16 @@ class PromptRegistry:
         if not path.exists():
             return []
         versions = []
+        known = {f.name for f in fields(PromptVersion)}
         for line in path.read_text().splitlines():
             line = line.strip()
             if line:
                 try:
-                    versions.append(PromptVersion(**json.loads(line)))
+                    data = json.loads(line)
+                    # Strip fields added in future schema versions so old code
+                    # doesn't choke on forward-compatible JSONL entries.
+                    data = {k: v for k, v in data.items() if k in known}
+                    versions.append(PromptVersion(**data))
                 except Exception as e:
                     log.warning(f"PromptRegistry: skipping malformed line: {e}")
         return versions
