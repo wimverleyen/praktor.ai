@@ -439,6 +439,9 @@ def cmd_judge_optimize(args):
         agent_type=getattr(args, "agent", None) or None,
         model=getattr(args, "model", None) or None,
         verbose=True,
+        search_mode=getattr(args, "search_mode", "threshold"),
+        max_trials=getattr(args, "max_trials", 10),
+        candidates_per_round=getattr(args, "candidates_per_round", 3),
     ))
 
 
@@ -820,6 +823,14 @@ def main():
                     help="Calibrate this judge (default: all). General agents share judge_general.")
     jo.add_argument("--model", "-m", default=None,
                     help="Override LLM model for judge (default: from settings)")
+    jo.add_argument("--search-mode", dest="search_mode",
+                    choices=["threshold", "pareto"], default="threshold",
+                    help="threshold: one-shot few-shot injection (default). "
+                         "pareto: GEPA-inspired multi-round Pareto frontier search.")
+    jo.add_argument("--max-trials", dest="max_trials", type=int, default=10,
+                    help="Maximum search rounds for --search-mode pareto (default: 10).")
+    jo.add_argument("--candidates-per-round", dest="candidates_per_round", type=int, default=3,
+                    help="Candidate prompts generated per round in pareto mode (default: 3).")
 
     # --- golden-rollback ---
     gr = sub.add_parser("golden-rollback",

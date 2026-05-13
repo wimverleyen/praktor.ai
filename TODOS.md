@@ -209,3 +209,135 @@ Implemented in PR11a.
 **Cons:** None — trivial change. Can be done in the same PR11b commit.
 
 **Context:** Identified in `/plan-design-review` (2026-04-19). Part of the Dataset→Training Data rename decision made during this review.
+
+---
+
+## [P1] Phase 3: Fix all internal package imports (pip install -e . broken)
+
+**What:** Change every `from governance.policy import`, `from core.agent_definition import`, etc. throughout `praktor/` to absolute `praktor.` prefix paths. Also remove `sys.path.insert(0, .../praktor)` from test files.
+
+**Why:** Without this, `pip install -e .` results in `ModuleNotFoundError` for every governance/core/monitoring path. Every item below is blocked until this is fixed.
+
+**Blast radius:** praktor/governance/*.py, praktor/core/*.py, praktor/monitoring/*.py, praktor/tools/*.py, praktor/transport/*.py, praktor/agents/*.py, praktor/clinical/**/*.py (~32 files), tests/*.py (~20 files).
+
+**Context:** Identified in PLAN.md Phase 3 review (2026-04-29).
+
+---
+
+## [P1] Phase 3: Write docs/governance.md as the authoritative spec
+
+**What:** Create `docs/governance.md` covering: `GovernancePolicy` API, `block_pii()` quickstart, `RegexEntities` constants, `dry_run=True` escape hatch, `GovernancePolicyViolation` fields, PresidioDetector vs RegexDetector tradeoffs.
+
+**Why:** Governance is a new framework surface — without a spec doc, API consumers have no contract to code against and reviewers can't verify correctness.
+
+**Context:** PLAN.md Phase 3, item 1 (2026-04-29). Must be written before wiring governance into Agent.run().
+
+---
+
+## [P1] Phase 3: Structured GovernancePolicyViolation (field_name, entity_type, detector_class, doc_url)
+
+**What:** Add `field_name`, `entity_type`, `detector_class` fields + helpful `__str__` to `GovernancePolicyViolation`. Example: "Field 'text' blocked by RegexDetector: US_SSN detected. See: https://github.com/wimverleyen/praktor.ai#governance-quickstart".
+
+**Why:** Bare exceptions with no context are unusable in production. Actionable errors are table stakes for a framework API.
+
+**Context:** PLAN.md Phase 3, DX item 3/11 (2026-04-29).
+
+---
+
+## [P1] Phase 3: Add GovernancePolicy(dry_run=True) escape hatch
+
+**What:** Add `dry_run: bool = False` to `GovernancePolicy`. When True, detectors run but only log to stderr — never raise, never block sink writes.
+
+**Why:** Without this, devs must mock internals to test governance-adjacent code. Standard test-ergonomics escape hatch.
+
+**Context:** PLAN.md Phase 3, DX item 4 (2026-04-29).
+
+---
+
+## [P1] Phase 3: Wire pre-call governance check into Agent.run()
+
+**What:** Before each LLM call in `Agent.run()`, iterate `policy.pre_call_detectors` over the prompt. On `BLOCK` → raise `GovernancePolicyViolation`, halt immediately (no LLM call). On `REDACT` → replace the flagged field with `[REDACTED]` before calling.
+
+**Why:** Core governance contract. Without this, the policy object exists but has no effect.
+
+**Context:** PLAN.md Phase 3, item 3 (2026-04-29).
+
+---
+
+## [P1] Phase 3: Wire post-call governance check into Agent.run()
+
+**What:** After each LLM response in `Agent.run()`, iterate `policy.post_call_detectors` over the output. On `BLOCK` → raise `GovernancePolicyViolation` (response never yielded). On `REDACT` → replace fields before returning.
+
+**Why:** Completes the governance loop — pre-call covers input, post-call covers output.
+
+**Context:** PLAN.md Phase 3, item 4 (2026-04-29).
+
+---
+
+## [P1] Phase 3: RegexEntities constants class (no magic strings)
+
+**What:** Add `RegexEntities` class with named constants matching `RegexDetector._PATTERNS` keys (e.g. `RegexEntities.US_SSN`, `RegexEntities.CREDIT_CARD`). Re-export from `praktor.governance`.
+
+**Why:** Magic strings in detector configs cause silent misses. Named constants let IDEs autocomplete and catch typos at import time.
+
+**Context:** PLAN.md Phase 3, DX item (2026-04-29).
+
+---
+
+## [P1] Phase 3: block_pii() convenience function
+
+**What:** Add `block_pii() -> AgentDefinition` helper in `praktor/governance/helpers.py`, re-exported from `praktor/__init__.py`. Returns a pre-configured `AgentDefinition` with `GovernancePolicy` blocking US_SSN, CREDIT_CARD, EMAIL_ADDRESS.
+
+**Why:** The "magical moment" for new users. One import + one call should block PII — no config required.
+
+**Context:** PLAN.md Phase 3, DX item 6 / quickstart goal (2026-04-29).
+
+---
+
+## [P1] Phase 3: Add tests/test_governance_dx.py
+
+**What:** New test file with 5 test groups: `block_pii()` returns new AgentDefinition; `RegexEntities` constants match `_PATTERNS` keys; `DetectorConfig(detector_class=RegexDetector)` coerces to qualified string; unknown entity logs WARNING (not PresidioDetector); `GovernancePolicyViolation.__str__` includes doc_url.
+
+**Why:** New DX API surface has zero test coverage. These tests define the contract.
+
+**Context:** PLAN.md Phase 3, item 15 (2026-04-29).
+
+---
+
+## [P1] Phase 3: Governance metrics in monitoring stack
+
+**What:** Emit `governance.block_count`, `governance.redact_count`, `governance.detector_latency_ms` KPIs on each pre/post-call check. Wire into the Grafana dashboard as a new "Governance" row.
+
+**Why:** Without metrics, governance violations are silent in production monitoring.
+
+**Context:** PLAN.md Phase 3 (2026-04-29).
+
+---
+
+## [P1] Phase 3: DetectorConfig accepts class OR string for detector_class
+
+**What:** `DetectorConfig.__post_init__` should coerce a class reference to its qualified string name (e.g. `RegexDetector` → `"praktor.governance.detectors.RegexDetector"`). Stored as string in audit log for serializability.
+
+**Why:** Passing a class directly is ergonomic; storing a string is required for JSON audit logs.
+
+**Context:** PLAN.md Phase 3, DX items (2026-04-29).
+
+---
+
+## [P1] Phase 3: demo-governance CLI command (< 2 min, no Ollama needed)
+
+**What:** Add `python -m praktor demo-governance` subcommand that runs a standalone RegexDetector blocking US_SSN on a test string. Should print a `GovernancePolicyViolation` with structured fields. No LLM required.
+
+**Why:** Zero-to-BLOCK in under 2 minutes is the DX north star. Devs must see governance work before wiring it into an agent.
+
+**Context:** PLAN.md Phase 3, DX magical moment (2026-04-29).
+
+---
+
+## [P1] Phase 3: Add py.typed marker (PEP 561)
+
+**What:** Add an empty `praktor/py.typed` file to declare the package as typed. Required for mypy strict mode and IDE type inference.
+
+**Why:** Without this, all type annotations in the package are invisible to external type checkers.
+
+**Context:** PLAN.md Phase 3, item 13 (2026-04-29).
